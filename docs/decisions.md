@@ -3,6 +3,25 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-06 — There are two Cloudflare zones for `workwright.co`; only one is live
+**What happened:** the Resend DKIM/SPF records were added and Resend stayed `pending`. It read
+like DNS propagation. It wasn't. `workwright.co` delegates to `elijah`/`sue.ns.cloudflare.com`,
+but the zone the records went into is served by `igor`/`naya.ns.cloudflare.com` — a second
+Cloudflare zone for the same domain. Querying both authoritative servers directly settled it:
+`igor` returned the DKIM record, `elijah` returned NXDOMAIN. Nothing added to the `igor` zone is
+visible to the internet.
+**How to tell you are in the right zone:** the live one already serves `MS=ms31682083` and the
+Outlook MX/SPF records, and those resolve from a public resolver. The dead one looks identical in
+the dashboard.
+**Applies again at deploy:** the `status.workwright.co` CNAME must go in the `elijah`/`sue` zone
+too, or SSL will not issue and the site will not resolve — the same failure, one phase later.
+**Rejected fix:** repointing the registrar at `igor`/`naya`. That would move live Microsoft 365
+mail for the whole domain onto a zone nobody is currently relying on, to solve a problem that a
+copy-paste of three records solves.
+**Lesson worth keeping:** when a DNS change "hasn't propagated," ask the authoritative nameserver
+directly before waiting. `nslookup -type=TXT <record> <the-ns>` answers in a second what an hour
+of refreshing a status page will not.
+
 ## 2026-08-06 — One `targets.alerting` boolean after all (supersedes the derived-state decision below)
 **What changed:** the earlier decision derived alert state entirely from the tail of `checks`.
 Re-reading the acceptance criteria before writing the checker killed it: *"deactivating it
