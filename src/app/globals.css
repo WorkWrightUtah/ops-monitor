@@ -1,26 +1,47 @@
 @import "tailwindcss";
 
+/* Charcoal and copper (spec). Two accent colours and a grey ramp — anything
+   more turns a status board into decoration. Green/red carry up/down state
+   because that reading is universal; copper carries emphasis and links. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fbfaf9;
+  --foreground: #1c1b1a;
+  --surface: #ffffff;
+  --border: #e3e0dc;
+  --muted: #6f6b66;
+  --copper: #a5642e;
+  --up: #2f7d4f;
+  --down: #b3392f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #1a1918;
+    --foreground: #ecebe9;
+    --surface: #232120;
+    --border: #38352f;
+    --muted: #9c968e;
+    --copper: #d08c4f;
+    --up: #4fae74;
+    --down: #e0685c;
+  }
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-copper: var(--copper);
+  --color-up: var(--up);
+  --color-down: var(--down);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }
