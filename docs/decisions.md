@@ -3,6 +3,26 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-06 — One `targets.alerting` boolean after all (supersedes the derived-state decision below)
+**What changed:** the earlier decision derived alert state entirely from the tail of `checks`.
+Re-reading the acceptance criteria before writing the checker killed it: *"deactivating it
+produces exactly one recovery notice."* Deactivating a target stops the checker writing rows for
+it, so the "first successful check" that the derived design keys recovery off never arrives — it
+would send nothing at all. And because the check history then freezes, any notice keyed off that
+frozen tail would re-send every five minutes, breaking "no repeats" in the other direction.
+**Why a boolean and not an `alerts` table:** the column answers the single question the history
+genuinely cannot — *have we already told someone?* Everything else still comes from `checks`: the
+two-consecutive-failure threshold is counted from the check rows, not tracked in a counter. One
+column, one question.
+**The flag is set only after a send succeeds,** so a Resend or webhook failure leaves the alert
+outstanding and the next run retries rather than marking an outage announced that nobody heard.
+**Trade-off accepted:** flag and history can in principle disagree if the process dies between
+sending and updating. The next run self-corrects: a target still failing with `alerting = false`
+just alerts again, which is a duplicate message rather than silence. Erring toward one extra
+email beats erring toward an unreported outage.
+**Revisit if:** we need an audit trail of who was notified and when — that is a real `alerts`
+table, and this column becomes a view over it.
+
 ## 2026-08-06 — OPEN QUESTION: Supabase Auth still needs custom SMTP wired to Resend
 **The question for Ryan:** signup confirmation and password-reset mail currently goes through
 Supabase's built-in mailer, which is rate-limited to a couple of messages an hour and is intended
@@ -46,7 +66,7 @@ result set, not an error — so a team member with a capitalized address would h
 dashboard and no explanation.
 **Revisit if:** never; this is a bug fix, kept here because the near-miss is the lesson.
 
-## 2026-08-06 — Alert state is derived from `checks`, not stored on `targets`
+## 2026-08-06 — ~~Alert state is derived from `checks`, not stored on `targets`~~ (SUPERSEDED, same day, by the `targets.alerting` entry above)
 **Why:** the de-duplication rules ("fire at two consecutive fails", "no repeats while down",
 "one recovery notice") all describe the *tail* of a target's check history, and the tail is
 already in `checks`. Counting consecutive failures from the newest row backwards gives:
