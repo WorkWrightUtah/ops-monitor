@@ -3,6 +3,22 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-06 — `railway.json` applies to every service built from the repo
+**What happened:** the checker service deployed green and then crashed on every run with
+"Could not find a production build in the `.next` directory." It was running `next start`, not
+`npm run check`. A committed `railway.json` overrides start commands set per-service through the
+API, and because two services build from this one repo, the web app's start command was being
+applied to the cron job. Skipping the Next build for the checker — correct on its own — turned a
+wrong-command problem into a crash.
+**Two traps, not one:** a Railway **redeploy replays the previous build with its old config
+snapshot**, so the first fix appeared not to work. Config changes need a fresh build from a push.
+That cost two wasted redeploys before the pattern was obvious.
+**Fix:** `railway.json` now carries only what both services genuinely share (builder, restart
+policy). Start and build commands are per-service; `railway.checker.json` holds the cron schedule.
+**Lesson worth keeping:** on a Railway cron service, `SUCCESS` means the image built — not that
+the job ran. Always read the deploy logs, or check that the work actually landed in the database.
+A green checkmark was reported as a working deploy here, and it wasn't.
+
 ## 2026-08-06 — Teams via an incoming webhook, not the n8n Microsoft Teams node
 **Why:** the Teams node needs a `microsoftTeamsOAuth2Api` credential. Two were created and
 neither ever completed consent — both failed with "Unable to sign without access token" — and
