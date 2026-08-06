@@ -3,6 +3,23 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-06 — Teams via an incoming webhook, not the n8n Microsoft Teams node
+**Why:** the Teams node needs a `microsoftTeamsOAuth2Api` credential. Two were created and
+neither ever completed consent — both failed with "Unable to sign without access token" — and
+Teams OAuth commonly dead-ends on Azure AD tenant admin consent that the builder cannot grant.
+The channel's own Power Automate incoming webhook needs no OAuth at all and is self-serve from
+the channel in about two minutes.
+**Shape:** checker → n8n webhook → HTTP Request → Teams incoming webhook. n8n stays in the path
+because the spec names it, and it earns its place: the Adaptive Card is built in n8n from the
+checker's structured payload (`event`, `target`, `reason`, `checked_at`), so the message can be
+reformatted without redeploying the app. The card is colored Attention for an outage and Good
+for a recovery.
+**Verified:** the full alert lifecycle ran end to end — silent on failure 1, one alert on
+failure 2, silent on failure 3, one recovery on deactivation, silent after. Three n8n executions
+recorded, all successful, none spurious.
+**Revisit if:** Teams OAuth gets granted tenant-wide, or the webhook URL needs rotating — it is
+currently stored in the n8n node and in Railway, not in the repo.
+
 ## 2026-08-06 — There are two Cloudflare zones for `workwright.co`; only one is live
 **What happened:** the Resend DKIM/SPF records were added and Resend stayed `pending`. It read
 like DNS propagation. It wasn't. `workwright.co` delegates to `elijah`/`sue.ns.cloudflare.com`,
