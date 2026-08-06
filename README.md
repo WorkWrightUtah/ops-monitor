@@ -1,54 +1,189 @@
-# [CLIENT] — [Tool]
+# WorkWright — Ops Monitor
 
-A WorkWright House Stack app (Next.js · Supabase · Railway · Resend), scaffolded from
+Checks WorkWright's live sites every five minutes, records uptime and response time, and raises
+one alert (email + Teams) when a site goes down and one notice when it comes back.
+
+A WorkWright House Stack app (Next.js · Supabase · Railway · Resend · n8n), scaffolded from
 [`workwrightutah/template`](https://github.com/workwrightutah/template). House rules are in
-[`CLAUDE.md`](./CLAUDE.md); scope in [`docs/spec.md`](./docs/spec.md); running decisions in
-[`docs/decisions.md`](./docs/decisions.md).
+[`CLAUDE.md`](./CLAUDE.md); scope in [`docs/spec.md`](./docs/spec.md); every decision and why it
+was made in [`docs/decisions.md`](./docs/decisions.md).
 
-**Outcome flag:** [A / B / C] · **Domain:** [APP_DOMAIN]
+**Outcome flag:** Internal (WorkWright-owned) · **Domain:** `status.workwright.co`
 
-## Stack
-- **Next.js** — App Router, TypeScript, Tailwind. App code in `src/`.
-- **Supabase** — Postgres, Auth, Storage. Client helpers in `src/lib/supabase/`; migrations in `supabase/migrations/`.
-- **Railway** — hosting. Config in `railway.json`.
-- **Resend** — transactional email.
+---
 
-## Local setup
-```bash
-npm install
-cp .env.local.example .env.local   # fill from the Supabase dashboard + 1Password
-npm run dev                        # http://localhost:3000
-```
-Health check: [`/status`](http://localhost:3000/status) reports app liveness and env wiring.
+## Runbook: how to add a target
 
-## Before every push (house rule)
+This is the thing you'll do most often. It takes about a minute and needs no code and no deploy.
+
+1. Open the **Supabase dashboard** → project **ops-monitor** → **Table Editor** → **`targets`**.
+2. **Insert row.** Fill three columns and leave the rest alone:
+
+   | Column | What to put | Example |
+   |---|---|---|
+   | `name` | A human label. This is what appears on the dashboard tile and in the alert subject line. | `WorkWright marketing site` |
+   | `url` | The full URL to fetch, including `https://`. Must be `http://` or `https://` — the database rejects anything else. | `https://workwright.co` |
+   | `active` | `true` to start checking it, `false` to leave it parked. | `true` |
+
+   Leave `id`, `created_at`, and `alerting` empty — the database fills them in. **Never set
+   `alerting` by hand;** the checker owns that column, and editing it will either suppress a real
+   alert or fire a spurious one.
+
+3. That's it. The checker picks it up on its next run, within five minutes. Watch the dashboard
+   tile appear at `https://status.workwright.co`.
+
+### Removing or pausing a target
+
+- **Pause:** set `active` to `false`. History is kept; checking stops. If the target had an open
+  alert, you'll get one recovery notice closing it out — that's intentional, not a bug.
+- **Delete:** delete the row. Its entire check history goes with it. Prefer pausing.
+
+### Things worth knowing
+
+- A target counts as **up** on any `2xx` or `3xx` response. Redirects are followed, so a site that
+  301s to its canonical host is healthy.
+- Checks time out after **10 seconds**. A timeout is a failure with no status code.
+- One URL, one row — the database enforces it, so you can't accidentally watch the same site twice
+  under two names.
+
+---
+
+## Runbook: how alerts behave
+
+The rules, exactly:
+
+| Situation | What happens |
+|---|---|
+| A check fails once | **Nothing.** One blip is not an outage. |
+| A second check fails in a row | **One alert** — a Resend email to `hello@workwright.co` *and* an Adaptive Card in the Teams channel. |
+| It keeps failing | **Nothing more.** One outage produces one alert, however long it lasts. |
+| It responds successfully again | **One recovery notice** to the same two channels. |
+| You pause a target that was alerting | **One recovery notice**, closing the alert out. |
+| A target that never alerted recovers or is paused | **Nothing.** There's nothing to take back. |
+
+**Why you won't get spammed:** a `targets.alerting` flag tracks whether a notice is outstanding.
+It's set only *after* a notice is actually delivered — so if both channels fail, the alert stays
+open and the next run tries again rather than marking an outage announced that nobody heard.
+
+**If only one channel is down**, the notice still counts as delivered and won't re-send; the
+failure is in the Railway logs for the `checker` service. Keeping "one outage, one alert" intact
+was judged more important than guaranteeing both channels every time.
+
+### Testing the alert path
+
+There's a seed target called **Broken route (alert test)** that points at a 404 route and sits
+inactive.
+
+1. Set its `active` to `true`.
+2. Wait two check cycles (≤ 10 minutes). You should get exactly one email and one Teams card.
+3. Set `active` back to `false`. You should get exactly one recovery notice, and nothing after.
+
+If you want it faster than the cron, run `npm run check:local` locally — each invocation is one
+cycle.
+
+---
+
+## Runbook: how to redeploy
+
+Railway auto-deploys on every push to `main`. A manual redeploy is only needed to roll back or to
+pick up a changed environment variable.
+
+**Before any deploy** (house rule — in this order):
+
 ```bash
 npm run build   # must pass
 npm run lint    # must pass
+npm test        # alert rules — must pass
+git status      # must be clean
+git log origin/main -1   # your commit must be here, not just local
 ```
 
-## Deploy runbook (exact order)
-1. `npm run build` passes locally
-2. Commit and push to GitHub `main`
-3. Confirm the push landed: `git log origin/main -1`
-4. Deploy via the Railway MCP (or `railway up`)
-5. Open the deploy URL and confirm it loads (check `/status`)
-6. Read the Railway deploy logs for errors or warnings
+Then push, or trigger a redeploy from the Railway dashboard → service → **Deployments** →
+**Redeploy**.
 
-## Rollback
-- **App:** Railway keeps every build. Service → Deployments → last-good deploy → **Redeploy** (or via the Railway MCP).
-- **Database:** never hand-edit production. Roll forward with a new migration in `supabase/migrations/`.
+**After any deploy, confirm it actually works** — don't trust a green checkmark:
 
-## Secrets
-Environment variables live in **Railway service variables**; credentials live in **1Password**.
-`.env.local` is gitignored — never commit real values (house rule).
+```bash
+curl -I https://status.workwright.co/login     # expect 200
+curl    https://status.workwright.co/status    # expect "app": "ok" and both env flags true
+```
+
+### Rollback
+
+- **App:** Railway keeps every build. Service → **Deployments** → last known-good → **Redeploy**.
+- **Database:** never hand-edit production. Roll forward with a new migration in
+  `supabase/migrations/`.
+
+---
+
+## Services
+
+The Railway project `ops-monitor` runs **two** services off this one repo:
+
+| Service | What it does | Config |
+|---|---|---|
+| `web` | The dashboard. Next.js. | Start: `npm run start` |
+| `checker` | The five-minute job. Runs once and exits. | Cron: `*/5 * * * *`, start: `npm run check` |
+
+They're deliberately separate: a redeploy, crash, or idle-sleep of the dashboard must not be able
+to silently stop the monitoring. That would be the worst possible failure for a tool whose whole
+job is noticing when things stop.
+
+---
+
+## Local setup
+
+```bash
+npm install
+cp .env.local.example .env.local   # fill from Supabase dashboard + 1Password
+npm run dev                        # http://localhost:3000
+```
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Dashboard at localhost:3000 |
+| `npm run build` / `npm run lint` | Must both pass before any push |
+| `npm test` | The alert rules. Fast, no network, no database. |
+| `npm run check:local` | Run one checker cycle against the live database, using `.env.local` |
+
+`npm run check:local` writes real rows and sends real alerts. It is the same code the cron runs.
+
+---
+
+## Who can see the dashboard
+
+Team only. Signing in requires a Supabase Auth account, and the Row Level Security policies only
+return data to a **`@workwright.co`** email address. Anyone else can create an account and sign
+in, and will see an empty dashboard — that's by design, not a leak: RLS is the security boundary,
+so the gate holds even against someone calling the API directly.
+
+To add a team member: they create an account at `/login`, or you add one in Supabase →
+**Authentication** → **Add user**. No role assignment needed; the email domain is the gate.
+
+---
 
 ## Structure
+
 ```
-src/app/              routes (App Router)
-src/app/status/       health check
-src/lib/supabase/     server + browser clients
-supabase/migrations/  SQL migrations (RLS on every table before launch)
-docs/                 spec.md, decisions.md
-railway.json          Railway build + deploy config
+src/app/                routes (App Router)
+src/app/login/          sign-in page + auth server actions
+src/app/status/         public health check (reports no data)
+src/checker/            the five-minute job
+  alert-rules.ts        the alert contract, as a pure tested function
+  http-check.ts         one HTTP GET, shaped like a checks row
+  notify.ts             Resend email + n8n webhook
+  run.ts                entry point the cron service runs
+src/components/         status tile, response-time chart
+src/lib/supabase/       browser + server clients (RLS-respecting)
+supabase/migrations/    SQL migrations — the only way schema changes
+docs/                   spec.md, decisions.md
 ```
+
+## Secrets
+
+Environment variables live in **Railway service variables**; credentials live in **1Password**.
+`.env.local` is gitignored — never commit real values.
+
+The `service_role` key is the dangerous one: it bypasses every RLS policy. It belongs on the
+`checker` service only, and must never appear in a `NEXT_PUBLIC_*` variable, where it would be
+shipped to the browser.

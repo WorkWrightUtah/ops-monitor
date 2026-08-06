@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "WorkWright App",
-  description: "A WorkWright House Stack application.",
+  title: "Ops Monitor · WorkWright",
+  description: "Uptime and response times for WorkWright's live sites.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -2,9 +2,22 @@
 
 ## This project
 
-- **Client:** `[CLIENT_NAME]` · **Outcome flag:** `[A / B / C]` · **Domain:** `[APP_DOMAIN]`
-- **What it is:** `[Two sentences: what this tool does and for whom.]`
+- **Client:** WorkWright LLC (internal) · **Outcome flag:** Internal (WorkWright-owned) · **Domain:** `status.workwright.co`
+- **What it is:** Checks WorkWright's live sites every five minutes and records uptime and response time. Raises one alert (email + Teams) when a site goes down and one notice when it comes back.
 - **Project docs:** scope and data model in `docs/spec.md`; running decisions log in `docs/decisions.md`. Read them before structural changes; update `decisions.md` the same day a choice is made.
+
+### This app's coordinates
+
+| Piece | Value |
+|---|---|
+| Supabase project ref | `mgzhjwboinevltuwprxv` |
+| Railway project | `ops-monitor` — two services: `web` (dashboard) and `checker` (cron, `*/5 * * * *`) |
+| n8n workflow | [Ops Monitor — Alerts to Teams](https://workwright.app.n8n.cloud/workflow/lWBKekNRPrLacFzZ) |
+| Cloudflare zone | `workwright.co` in **Ryan's** account (nameservers `elijah`/`sue`). A second, never-activated zone exists in Benson's account — records added there do not resolve. See `docs/decisions.md`. |
+
+**One gotcha worth knowing before touching anything:** the checker is the only writer, and it uses
+the `service_role` key, which bypasses RLS. The dashboard must keep reading as the signed-in user
+so the team-only policies stay in force — never import `src/checker/supabase.ts` from `src/app/`.
 
 Everything below is WorkWright house rules — identical in every repo. Change house rules only via PR to `workwrightutah/template`.
 

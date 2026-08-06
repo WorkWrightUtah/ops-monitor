@@ -1,35 +1,131 @@
-# Spec — [CLIENT_NAME] [TOOL]
+# WorkWright Shop Monitor — Spec
 
-> Source of truth for scope and data model. Written from the signed SOW before build
-> hours start; Ryan reviews before the first migration. When scope changes, this file
-> changes the same day.
+> **Repo:** `workwrightutah/ops-monitor` · **Domain:** `status.workwright.co`
+> Translation of `SOW_Benson.pdf` into the repository's single source of truth. Kept true to what
+> shipped — where the build diverged from the original plan, this file records what was actually
+> built and `docs/decisions.md` records why.
 
-## 1. What & who
-- **Outcome flag:** [A / B / C]
-- **Users / roles:** [who signs in and what each can do]
-- **Problem it replaces:** [the spreadsheet / manual process / old tool]
-- **Definition of done (v1):** [the shortest list that makes this shippable]
+## The one sentence
 
-## 2. Features (v1 scope)
-- [ ] [Feature — one checkable line each]
-- [ ] ...
+A small, team-only web app that checks WorkWright's live sites every five minutes, records uptime
+and response time, and raises one alert (email + Teams) when a site goes down and one notice when
+it comes back.
 
-**Explicitly out of scope for v1:**
-- [thing we are NOT building yet]
+## Stack & coordinates
 
-## 3. Data model
-> Every table carries `org_id`; RLS scopes all access by org (see CLAUDE.md). Schema
-> changes only via `supabase/migrations/`.
-
-| Table | Columns | Notes |
+| Piece | Choice | Status |
 |---|---|---|
-| `orgs` | id, name, created_at | tenant root |
-| `[table]` | id, org_id, ... | [purpose] |
+| Repo | `workwrightutah/ops-monitor` | ✅ |
+| Live domain | `https://status.workwright.co` (CNAME in Cloudflare) | ⏳ pending DNS |
+| Data layer | Supabase `mgzhjwboinevltuwprxv`, schema via migrations, RLS on | ✅ |
+| Auth | Supabase Auth, email + password — dashboard is team-only | ✅ |
+| Scheduler | **Railway cron** service, `*/5 * * * *` | ✅ |
+| Hosting | Railway project `ops-monitor`; services `web` + `checker` | ✅ |
+| Email alerts | Resend → `hello@workwright.co` | ⏳ pending domain verification |
+| Chat alerts | n8n webhook → Teams incoming webhook | ✅ |
+| Outcome flag | Internal (WorkWright-owned) | ✅ |
 
-## 4. Business rules
-- [A rule the code must enforce — e.g. "a quote can't be sent without a line item"]
+## Architecture
 
-## 5. Integrations
-- **Auth:** Supabase Auth — [providers: email magic link / password / OAuth]
-- **Email (Resend):** [what triggers a send, to whom, from which domain]
-- **Automation (n8n):** [cross-app flows — flags A/C only; flag B keeps automation in-app]
+```mermaid
+flowchart TD
+    S[Railway cron · every 5 min] --> C[checker service]
+    C -->|HTTP GET each active target| C
+    C -->|insert status_code, response_ms, ok| DB[(Supabase: checks)]
+    C --> E{Evaluate alert rules}
+    E -->|2 consecutive fails, not already alerting| A[Resend email]
+    E -->|2 consecutive fails, not already alerting| N[n8n webhook]
+    N --> T[Teams incoming webhook]
+    E -->|recovered, or deactivated while alerting| R[One recovery notice]
+    U[User] -->|login via Supabase Auth| D[web service · Dashboard]
+    D -->|reads, RLS-guarded, as the signed-in user| DB
+```
+
+The checker writes; the dashboard reads. The checker uses the `service_role` key and bypasses RLS;
+the dashboard reads as the signed-in user so the team-only policies stay in force. Nothing
+client-owned is watched — only WorkWright property.
+
+## Data model
+
+Created via migrations only. RLS enabled on both tables; only authenticated `@workwright.co`
+accounts can read.
+
+**`targets`** — the things we watch
+
+| Column | Notes |
+|---|---|
+| `id` | uuid, surrogate key |
+| `name` | Human label; appears on the tile and in alert subjects |
+| `url` | What we GET. Constrained to `http(s)://`, unique |
+| `active` | Only active targets are checked |
+| `alerting` | True between sending an outage alert and its recovery notice. **Owned by the checker — never edit by hand.** Added mid-build; see `docs/decisions.md` |
+| `created_at` | timestamptz |
+
+**`checks`** — one row per check, per target
+
+| Column | Notes |
+|---|---|
+| `id` | bigint identity |
+| `target_id` | References `targets`, cascade delete |
+| `checked_at` | When the check ran |
+| `status_code` | HTTP status, or **NULL** when no HTTP response arrived (DNS failure, refused, timeout) |
+| `response_ms` | Response time in ms, recorded on failures too |
+| `ok` | `true` on 2xx/3xx; `false` otherwise |
+
+**`target_status`** — a view, not a table. One row per target with its latest check and 24h/7d
+uptime, so a dashboard tile is one query rather than four. Declared `security_invoker = on` so RLS
+still applies to the caller.
+
+### Deviations from the original spec
+
+- **`targets.alerting` was added.** The original plan derived alert state from the tail of
+  `checks`. That cannot satisfy "deactivating produces exactly one recovery notice," because
+  deactivating stops the check rows that recovery keys off. One boolean fixes it.
+- **No `org_id`**, against the house default. Single-tenant internal tool; the spec caps the
+  columns. Logged as a deliberate exception.
+
+## Alert behavior (the core contract)
+
+- A check **fails** when `ok = false`.
+- **Fire an alert** on **two consecutive failed checks** when not already alerting. The alert is a
+  Resend email to `hello@workwright.co` **and** a post to the n8n webhook, which posts an Adaptive
+  Card to Teams.
+- **No repeat alerts** while a target stays down. One outage → one alert.
+- **One recovery notice** when the target responds again, or when a target is **deactivated while
+  alerting** — otherwise the last thing anyone heard about it is "down."
+- Recovery notices only fire for targets that actually alerted.
+- The `alerting` flag is set **only after a notice is delivered**, so a total delivery failure
+  leaves the alert open and the next run retries rather than marking an outage announced that
+  nobody heard.
+
+Encoded as a pure function in `src/checker/alert-rules.ts` with 12 tests (`npm test`), including
+the full outage lifecycle.
+
+## Seed targets
+
+- `workwright.co` — **inactive**; the domain has no web server yet.
+- The ops-monitor itself — **active**, currently pointed at the Railway domain; repoint to
+  `status.workwright.co` once the CNAME resolves.
+- One deliberately broken 404 route — **inactive** except when testing alerts.
+
+## Out of scope
+
+SMS alerts · public/client-facing status pages · multi-role permissions · data retention beyond
+30 days · Sentry integration (month 2) · monitoring anything client-owned.
+
+## Acceptance criteria — definition of done
+
+- [x] **Auth gate.** Dashboard requires login; a non-team account cannot see data. *Verified: team
+      account sees 3 targets, non-team and anonymous see `[]`, writes rejected with `42501`, both
+      through the live API and through the `target_status` view.*
+- [~] **Alert path.** Two consecutive failures produce one email and one Teams message;
+      deactivating produces exactly one recovery notice. *Teams half verified end to end against
+      the live channel. Email half blocked on Resend domain verification (DNS).*
+- [ ] **Live data renders.** 24h and 7d uptime and the response-time chart render with real data
+      after 24 hours of checks. *Wall-clock dependency; the checker began recording 2026-08-06.*
+- [~] **Live + secure.** Reachable with valid SSL. *Live on the Railway domain with a valid cert;
+      `status.workwright.co` pending the CNAME.*
+- [x] **Honest history.** `git log` shows incremental commits, not one giant push.
+- [x] **Runbook works.** README covers adding a target, alert behavior, and redeploying.
+      *Untested by Ryan — that's the actual criterion.*
+- [ ] **Hours reviewed.** Actual vs. the 8–10 budget, reviewed at handoff.
