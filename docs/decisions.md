@@ -3,6 +3,31 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-06 — OPEN QUESTION: Supabase Auth still needs custom SMTP wired to Resend
+**The question for Ryan:** signup confirmation and password-reset mail currently goes through
+Supabase's built-in mailer, which is rate-limited to a couple of messages an hour and is intended
+for testing only. Nothing is broken today because the accounts that exist were provisioned
+directly, but the first time a team member self-registers or forgets a password, the mail will
+silently not arrive.
+**Fix when unblocked:** once `workwright.co` finishes verifying in Resend, point Supabase's
+custom SMTP at Resend in the dashboard (Project Settings → Auth → SMTP). It is a settings change,
+not code, which is why it isn't in a migration.
+**Not blocking:** the acceptance criteria only require that login works and that a non-team
+account sees nothing — both are proven.
+
+## 2026-08-06 — Email + password login, not magic links
+**Why:** the spec asks for "Supabase Auth, email login" and leaves the mechanism open. Magic
+links would make every single sign-in depend on mail delivery, and mail is the one part of this
+stack that is not yet verified (see the open question above) — a monitoring tool that can't be
+logged into during an outage because its login email is queued is exactly the wrong failure.
+Passwords work with no external dependency.
+**Sign-up is left open on purpose:** RLS, not the absence of a sign-up form, is the security
+boundary. An outsider can create an account and will see an empty dashboard, which is precisely
+the acceptance test the spec asks for. Keeping sign-up open means that test can be run by anyone,
+any time, without an admin handing out credentials.
+**Revisit if:** the shop standardizes on SSO, or open sign-up starts collecting junk accounts —
+at which point disable sign-ups in the Supabase dashboard and provision team members by hand.
+
 ## 2026-08-06 — Team membership is "a `@workwright.co` email", enforced by one SQL function
 **Why:** the spec's data model is two tables, and a roles table would have made it three for a
 tool with exactly one role. `public.is_team_member()` reads the caller's JWT and compares the
