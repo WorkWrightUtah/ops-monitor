@@ -115,17 +115,35 @@ SMS alerts · public/client-facing status pages · multi-role permissions · dat
 
 ## Acceptance criteria — definition of done
 
-- [x] **Auth gate.** Dashboard requires login; a non-team account cannot see data. *Verified: team
-      account sees 3 targets, non-team and anonymous see `[]`, writes rejected with `42501`, both
-      through the live API and through the `target_status` view.*
+- [x] **Auth gate.** Dashboard requires login; a non-team account cannot see data.
+      *Verified three ways: (1) at the REST API — team sees 3 targets, non-team and anonymous see
+      `[]`, writes rejected `42501`; (2) through the `target_status` view, confirming
+      `security_invoker` holds; (3) in the deployed app — a signed-in non-team account gets HTTP
+      200, zero target data in the HTML, and a plain-language explanation.*
 - [~] **Alert path.** Two consecutive failures produce one email and one Teams message;
       deactivating produces exactly one recovery notice. *Teams half verified end to end against
-      the live channel. Email half blocked on Resend domain verification (DNS).*
+      the live channel: silent on failure 1, one alert on failure 2, silent on failure 3, one
+      recovery on deactivation, silent after — three n8n executions, none spurious. Email half
+      awaits Resend domain verification.*
 - [ ] **Live data renders.** 24h and 7d uptime and the response-time chart render with real data
-      after 24 hours of checks. *Wall-clock dependency; the checker began recording 2026-08-06.*
-- [~] **Live + secure.** Reachable with valid SSL. *Live on the Railway domain with a valid cert;
-      `status.workwright.co` pending the CNAME.*
+      after 24 hours of checks. *Wall clock. Recording started 2026-08-06 23:50 UTC; cadence
+      verified across three consecutive cron runs. Uptime and tiles already render correctly with
+      partial data.*
+- [~] **Live + secure.** Reachable with valid SSL. *Live with a valid cert on the Railway domain.
+      `status.workwright.co` DNS is correct and public; awaiting Railway certificate issuance.*
 - [x] **Honest history.** `git log` shows incremental commits, not one giant push.
-- [x] **Runbook works.** README covers adding a target, alert behavior, and redeploying.
-      *Untested by Ryan — that's the actual criterion.*
-- [ ] **Hours reviewed.** Actual vs. the 8–10 budget, reviewed at handoff.
+- [~] **Runbook works.** README covers adding a target, alert behavior, and redeploying.
+      *Written, but the criterion is that **Ryan** adds a target using only the README. That
+      cannot be self-certified.*
+- [ ] **Hours reviewed.** Actual vs. the 8–10 budget, reviewed at handoff. *No hours logged in
+      Teams Shifts yet — the one criterion no amount of building moves.*
+
+### Known open items at time of writing
+
+- Supabase Auth still uses the built-in test mailer; point SMTP at Resend once the domain verifies.
+- Supabase leaked-password protection is disabled (security advisor warning).
+- QA accounts `qa-team@workwright.co` and `qa-outsider@notwork.test` exist with known passwords,
+  created to prove the RLS gate. Delete before handoff.
+- Rotate the `service_role` and Resend keys at handoff.
+- The self-monitoring target points at the Railway domain; repoint to `status.workwright.co` once
+  its certificate issues. Same service, so history carries over.
