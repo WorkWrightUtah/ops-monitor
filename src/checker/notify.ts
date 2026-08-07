@@ -9,8 +9,8 @@ export type NoticeTarget = {
 };
 
 export type DeliveryReport = {
-  email: "sent" | "failed" | "skipped";
-  teams: "sent" | "failed" | "skipped";
+  email: "accepted" | "failed" | "skipped";
+  teams: "accepted" | "failed" | "skipped";
   /** True when at least one channel got the message out. */
   delivered: boolean;
   errors: string[];
@@ -75,7 +75,7 @@ async function sendEmail(
   target: NoticeTarget,
   result: CheckResult | null,
   checkedAt: string,
-): Promise<{ status: "sent" | "failed" | "skipped"; error?: string }> {
+): Promise<{ status: "accepted" | "failed" | "skipped"; error?: string }> {
   const apiKey = process.env.RESEND_API_KEY;
   const to = process.env.ALERT_EMAIL_TO;
   const from = process.env.ALERT_EMAIL_FROM;
@@ -110,7 +110,16 @@ async function sendEmail(
       };
     }
 
-    return { status: "sent" };
+    // "accepted", not "sent", and the distinction is not pedantry. A 200 from
+    // Resend means the message was queued — it says nothing about delivery.
+    // This bit us: a test send to a non-existent mailbox returned 200, hard
+    // bounced, and Resend auto-suppressed the address, so the next two real
+    // alerts were dropped silently while the logs cheerfully said "sent".
+    //
+    // Knowing the true outcome requires Resend delivery webhooks, which are
+    // out of scope here. Until then the honest word is "accepted", so nobody
+    // reads these logs as proof an alert arrived.
+    return { status: "accepted" };
   } catch (error) {
     return { status: "failed", error: `Resend request failed: ${String(error)}` };
   }
@@ -121,7 +130,7 @@ async function postToTeams(
   target: NoticeTarget,
   result: CheckResult | null,
   checkedAt: string,
-): Promise<{ status: "sent" | "failed" | "skipped"; error?: string }> {
+): Promise<{ status: "accepted" | "failed" | "skipped"; error?: string }> {
   const webhook = process.env.N8N_ALERT_WEBHOOK_URL;
   if (!webhook) return { status: "skipped", error: "N8N_ALERT_WEBHOOK_URL not set" };
 
@@ -152,7 +161,7 @@ async function postToTeams(
       };
     }
 
-    return { status: "sent" };
+    return { status: "accepted" };
   } catch (error) {
     return { status: "failed", error: `n8n request failed: ${String(error)}` };
   }
@@ -185,7 +194,7 @@ export async function sendNotice(
   return {
     email: email.status,
     teams: teams.status,
-    delivered: email.status === "sent" || teams.status === "sent",
+    delivered: email.status === "accepted" || teams.status === "accepted",
     errors,
   };
 }

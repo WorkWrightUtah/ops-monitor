@@ -3,6 +3,32 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-07 — OPEN: `hello@workwright.co` hard-bounces; alert email goes nowhere
+**What happened:** with Resend finally verified, the first test send to `hello@workwright.co`
+returned HTTP 200 and then **hard bounced**. Resend automatically added the address to its
+suppression list, so the next two alert emails — a real outage notice and its recovery — were
+**silently dropped**. The checker logged `email=sent` for both.
+**Root cause:** `workwright.co` routes mail to Microsoft 365, but `hello@` does not appear to be
+a real mailbox or alias. The spec names it as the alert recipient; nobody had checked it exists.
+**For Ryan — pick one:**
+1. Create `hello@workwright.co` as a shared mailbox or alias in Microsoft 365, then remove the
+   suppression in Resend, or
+2. Change `ALERT_EMAIL_TO` to an address that does exist.
+Either way the suppression entry must be deleted or every future send is dropped.
+**Why this was nearly missed:** a 200 from Resend means *queued*, not *delivered*. The only
+reason it surfaced is that the sent-email list was checked rather than trusting the logs.
+
+## 2026-08-07 — "accepted" is not "delivered", and the logs now say so
+**Why:** `sendEmail` returned `status: "sent"` on any 2xx from Resend. That word made a queued
+message look like a delivered one, and it is exactly what made the bounce above invisible — three
+emails reported as sent, zero received.
+**Change:** the status is now `accepted`. Same behaviour, honest word. True delivery status needs
+Resend delivery webhooks, which are out of scope for this build.
+**Revisit if:** alerting becomes load-bearing for a paying client. Then webhooks stop being
+optional, because "we sent it" is not a defence when nobody got it.
+**Lesson worth keeping:** verify the effect, not the API response. The Teams half was proven by
+reading the channel; the email half was "proven" by reading a log line, and the log line was wrong.
+
 ## 2026-08-06 — `railway.json` applies to every service built from the repo
 **What happened:** the checker service deployed green and then crashed on every run with
 "Could not find a production build in the `.next` directory." It was running `next start`, not
