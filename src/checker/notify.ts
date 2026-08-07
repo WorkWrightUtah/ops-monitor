@@ -16,8 +16,13 @@ export type DeliveryReport = {
   errors: string[];
 };
 
-/** Why the target is being reported, in plain words. */
-function reason(result: CheckResult | null): string {
+/**
+ * Why the target is being reported, in plain words.
+ *
+ * Exported for tests: this string is what a human reads at 2am, and getting it
+ * wrong is a real failure even though nothing throws.
+ */
+export function reason(result: CheckResult | null): string {
   if (!result) return "the target was switched off while an alert was open";
   if (result.status_code === null) {
     return "no response — DNS failure, refused connection, or timeout";
@@ -25,13 +30,13 @@ function reason(result: CheckResult | null): string {
   return `HTTP ${result.status_code}`;
 }
 
-function subjectFor(kind: NoticeKind, target: NoticeTarget): string {
+export function subjectFor(kind: NoticeKind, target: NoticeTarget): string {
   return kind === "down"
     ? `DOWN: ${target.name}`
     : `Recovered: ${target.name}`;
 }
 
-function bodyFor(
+export function bodyFor(
   kind: NoticeKind,
   target: NoticeTarget,
   result: CheckResult | null,

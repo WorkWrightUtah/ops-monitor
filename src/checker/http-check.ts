@@ -14,6 +14,20 @@ export const TIMEOUT_MS = 10_000;
 const USER_AGENT =
   "WorkWright-OpsMonitor/1.0 (+https://status.workwright.co; ops@workwright.co)";
 
+/**
+ * Which HTTP statuses count as healthy.
+ *
+ * 2xx and 3xx are up. Redirects are followed, so a 3xx here means the final
+ * response was itself a redirect — still a server that answered. 4xx and 5xx
+ * are down, including the 404 the deliberately-broken seed target returns,
+ * which is the whole point of that target.
+ *
+ * Split out from checkUrl so the rule can be tested without a network call.
+ */
+export function isHealthyStatus(status: number): boolean {
+  return status >= 200 && status < 400;
+}
+
 export async function checkUrl(
   url: string,
   timeoutMs: number = TIMEOUT_MS,
@@ -42,9 +56,7 @@ export async function checkUrl(
 
     return {
       status_code: response.status,
-      // 2xx and 3xx are healthy. 4xx and 5xx are not — including the 404 the
-      // deliberately-broken seed target returns, which is the whole point of it.
-      ok: response.status >= 200 && response.status < 400,
+      ok: isHealthyStatus(response.status),
       response_ms,
     };
   } catch {
