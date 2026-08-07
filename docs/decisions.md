@@ -3,6 +3,21 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-07 — Alerts go to `benson@workwright.co` for now, not `hello@` (spec deviation)
+**Why:** `hello@workwright.co` — the address the SOW names — hard bounces; it is not a real
+mailbox (see below). `benson@workwright.co` was tested and returns `delivered`, so alerts point
+there and the alert path is provably working end to end rather than blocked.
+**Verified by effect, not by API response:** the outage notice and its recovery both show
+`delivered` in Resend's sent-email list. The previous round showed `accepted` and delivered
+nothing.
+**This is deliberately temporary.** A monitoring alert that lands in one person's personal inbox
+is a single point of failure — it goes unread when Benson is on holiday, and it does not survive
+him leaving. The spec says `hello@`, and `hello@` is the right answer because a shared mailbox
+has more than one pair of eyes on it.
+**To finish properly:** create `hello@workwright.co` as a shared mailbox or distribution list in
+Microsoft 365, delete the bounce suppression in Resend, then set `ALERT_EMAIL_TO=hello@workwright.co`
+in Railway. No code change — it is one environment variable.
+
 ## 2026-08-07 — OPEN: `hello@workwright.co` hard-bounces; alert email goes nowhere
 **What happened:** with Resend finally verified, the first test send to `hello@workwright.co`
 returned HTTP 200 and then **hard bounced**. Resend automatically added the address to its

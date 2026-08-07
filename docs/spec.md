@@ -120,11 +120,13 @@ SMS alerts · public/client-facing status pages · multi-role permissions · dat
       `[]`, writes rejected `42501`; (2) through the `target_status` view, confirming
       `security_invoker` holds; (3) in the deployed app — a signed-in non-team account gets HTTP
       200, zero target data in the HTML, and a plain-language explanation.*
-- [~] **Alert path.** Two consecutive failures produce one email and one Teams message;
-      deactivating produces exactly one recovery notice. *Teams half verified end to end against
-      the live channel: silent on failure 1, one alert on failure 2, silent on failure 3, one
-      recovery on deactivation, silent after — three n8n executions, none spurious. Email half
-      awaits Resend domain verification.*
+- [x] **Alert path.** Two consecutive failures produce one email and one Teams message;
+      deactivating produces exactly one recovery notice. *Verified end to end on both channels:
+      silent on failure 1, one alert on failure 2 (email + Teams), silent on failure 3, one
+      recovery on deactivation, silent after. Email confirmed **delivered** in Resend's sent list —
+      not merely accepted, which is a distinction that already caught us out once. Caveat: mail
+      currently goes to `benson@workwright.co` because `hello@workwright.co` does not exist as a
+      mailbox; see `docs/decisions.md`.*
 - [ ] **Live data renders.** 24h and 7d uptime and the response-time chart render with real data
       after 24 hours of checks. *Wall clock. Recording started 2026-08-06 23:50 UTC; cadence
       verified across three consecutive cron runs. Uptime and tiles already render correctly with
