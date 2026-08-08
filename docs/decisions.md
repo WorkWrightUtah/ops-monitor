@@ -3,7 +3,18 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
-## 2026-08-07 — Alerts go to `benson@workwright.co` for now, not `hello@` (spec deviation)
+## 2026-08-08 — Alert email settles on `claude@workwright.co` (supersedes the `benson@` entry below)
+**Why:** a shared mailbox that Benson and Ryan both read. That resolves the objection raised
+against `benson@` — an alert landing in one person's inbox goes unread when they are away and
+does not survive them leaving. Two readers is the point.
+**Verified before switching:** test send returned `delivered`, not merely `accepted`. That check
+is now standard practice here after `hello@workwright.co` bounced and silently swallowed two real
+alerts.
+**`hello@workwright.co` is no longer needed** for this build. It remains suppressed in Resend; if
+anyone ever wants it as the alert address, the mailbox has to be created first and the suppression
+deleted, or every send is dropped.
+
+## 2026-08-07 — ~~Alerts go to `benson@workwright.co` for now, not `hello@`~~ (SUPERSEDED by the entry above)
 **Why:** `hello@workwright.co` — the address the SOW names — hard bounces; it is not a real
 mailbox (see below). `benson@workwright.co` was tested and returns `delivered`, so alerts point
 there and the alert path is provably working end to end rather than blocked.
