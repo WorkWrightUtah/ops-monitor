@@ -8,7 +8,13 @@ import { signOut } from "./login/actions";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Ops Monitor" };
 
-export default async function Dashboard() {
+export default async function Dashboard({ searchParams }: PageProps<"/">) {
+  // Set by the auth confirm/callback routes. Landing silently after clicking
+  // "confirm your email" leaves people wondering whether it worked.
+  const params = await searchParams;
+  const justConfirmed =
+    (Array.isArray(params.confirmed) ? params.confirmed[0] : params.confirmed) === "1";
+
   const supabase = await createClient();
 
   const {
@@ -80,6 +86,15 @@ export default async function Dashboard() {
           </form>
         </div>
       </header>
+
+      {justConfirmed ? (
+        <p
+          role="status"
+          className="mt-6 rounded-md border border-up/30 bg-up/10 px-3 py-2 text-sm text-up"
+        >
+          Email confirmed — you&rsquo;re signed in.
+        </p>
+      ) : null}
 
       {loadError ? (
         <p
