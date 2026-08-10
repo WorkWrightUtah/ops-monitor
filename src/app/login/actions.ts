@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { originFromHeaders } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/server";
 
 // Where confirmation links should come back to.
@@ -13,11 +14,7 @@ import { createClient } from "@/lib/supabase/server";
 // project's Site URL — which is how confirmation emails ended up pointing at
 // localhost. See docs/decisions.md.
 async function requestOrigin(): Promise<string | undefined> {
-  const h = await headers();
-  const host = h.get("x-forwarded-host") ?? h.get("host");
-  if (!host) return undefined;
-  const proto = h.get("x-forwarded-proto") ?? "https";
-  return `${proto}://${host}`;
+  return originFromHeaders(await headers());
 }
 
 // Only ever redirect to a path on this site. Without this check, a crafted

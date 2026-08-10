@@ -3,6 +3,45 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-10 — Route handlers must read the forwarded host, not `request.url`
+**Why:** behind Railway's proxy, `new URL(request.url).origin` inside a route handler resolves to
+the container's own bind address — `https://0.0.0.0:8080` — not the public hostname. Both auth
+routes built their redirects from it, so a confirmation link arrived correctly at
+`status.workwright.co/auth/callback` and was then redirected to an address no browser can reach.
+**How it was found:** a deploy-detection poll printed its redirect target and the target was
+`https://0.0.0.0:8080/auth/confirmed`. The trace that followed then died with an SSL error, because
+it was trying to speak TLS to a plain-HTTP internal port. Neither would have been visible from the
+code, and neither would have been visible from a build that passes.
+**Middleware was never affected**, which is why the login gate worked perfectly throughout and made
+this look like an auth bug rather than a URL bug: `request.nextUrl` already accounts for the
+forwarded headers. Route handlers and server actions do not. `lib/site-url.ts` now centralises it.
+**Revisit if:** anything else in `src/app/` starts constructing absolute URLs. It should use that
+helper, not `request.url`.
+
+## 2026-08-10 — A confirmed session can arrive in three shapes; all three are handled
+**Why:** the confirmation link was fixed twice and still landed people on the login form. Tracing a
+real link hop by hop against the live project — rather than reasoning about what Supabase *should*
+send — showed it handing the session back as `#access_token=…` on the URL **fragment**. A fragment
+is never transmitted to the server, so the callback route saw no `?code=`, concluded the link was
+incomplete, and redirected to the login form while a valid session sat unread in the address bar.
+**The three shapes, and what reads each:**
+
+| Arrives as | Read by | Where |
+|---|---|---|
+| `?token_hash=` | `/auth/confirm` | server |
+| `?code=` | `/auth/callback` | server |
+| `#access_token=` | `HashSession` | browser only |
+
+Which one turns up depends on project settings and on how the link was generated, not on our code —
+so all three are handled rather than betting on one. `HashSession` also strips the tokens from the
+address bar once used: they are live credentials and do not belong in browser history or in
+whatever someone pastes a link into.
+**Caveat recorded honestly:** the trace that found this used the admin `generate_link` API, which
+skips the PKCE handshake a real form signup performs, so the live form may still produce `?code=`.
+That is exactly the point — the app no longer needs to know which.
+**The lesson, again:** three fixes were shipped for this before one was traced end to end. The first
+two were reasoned from documentation and each was wrong in a way the next trace exposed in seconds.
+
 ## 2026-08-10 — Targets are added and removed from the dashboard, not from Supabase
 **Why:** Ryan asked for it, and the runbook's weakest step was the one that sent a non-technical
 owner into a production table editor to hand-type a URL. The form writes through the *request-scoped*
