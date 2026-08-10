@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HashSession } from "@/components/hash-session";
 import { createClient } from "@/lib/supabase/server";
 
 // Where a confirmation link finally lands.
@@ -23,6 +24,10 @@ export default async function ConfirmedPage() {
 
   return (
     <main className="mx-auto flex min-h-full w-full max-w-sm flex-col justify-center gap-8 px-6 py-24">
+      {/* Picks up a session delivered in the URL fragment, if that's the shape
+          Supabase used. Renders nothing otherwise. */}
+      <HashSession />
+
       <div>
         <p className="text-xs font-medium uppercase tracking-[0.18em] text-copper">
           WorkWright

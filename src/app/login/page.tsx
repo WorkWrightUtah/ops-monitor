@@ -1,3 +1,4 @@
+import { HashSession } from "@/components/hash-session";
 import { signIn, signUp } from "./actions";
 
 export const metadata = { title: "Sign in · Ops Monitor" };
@@ -15,6 +16,11 @@ export default async function LoginPage({
 
   return (
     <main className="mx-auto flex min-h-full w-full max-w-sm flex-col justify-center gap-8 px-6 py-24">
+      {/* A confirmation link whose session came back as a URL fragment can be
+          bounced here by the middleware, which cannot see fragments. This
+          claims the session and moves on; it renders nothing otherwise. */}
+      <HashSession />
+
       <div>
         <p className="text-xs font-medium uppercase tracking-[0.18em] text-copper">
           WorkWright

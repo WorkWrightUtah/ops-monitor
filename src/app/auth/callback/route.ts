@@ -35,13 +35,11 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  if (!code) {
-    return NextResponse.redirect(
-      `${origin}/login?error=${encodeURIComponent(
-        "That sign-in link is incomplete. Ask for a new one.",
-      )}`,
-    );
-  }
+  // No code and no error usually means the session came back in the URL
+  // fragment instead, which this handler cannot see — fragments never reach the
+  // server. Hand it to the confirmed page, which reads it in the browser. The
+  // fragment survives the redirect because the target has none of its own.
+  if (!code) return NextResponse.redirect(`${origin}/auth/confirmed`);
 
   const supabase = await createClient();
   const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
