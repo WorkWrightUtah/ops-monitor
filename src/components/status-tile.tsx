@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { ResponseChart, type ChartPoint } from "@/components/response-chart";
 import {
   formatMs,
@@ -51,9 +52,14 @@ function Metric({ label, value }: { label: string; value: string }) {
 export function StatusTile({
   target,
   history,
+  action,
 }: {
   target: TargetStatus;
   history: ChartPoint[];
+  // Rendered under the status pill. A slot rather than a baked-in delete button
+  // so this component stays a display component and the page decides who is
+  // allowed to see controls.
+  action?: ReactNode;
 }) {
   const state = stateOf(target);
   const copy = STATE_COPY[state];
@@ -66,12 +72,17 @@ export function StatusTile({
           <p className="truncate font-mono text-xs text-muted">{target.url}</p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
-          <span
-            className={`inline-block h-2 w-2 rounded-full ${copy.dot}`}
-            aria-hidden
-          />
-          <span className={`text-sm font-medium ${copy.text}`}>{copy.label}</span>
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`inline-block h-2 w-2 rounded-full ${copy.dot}`}
+              aria-hidden
+            />
+            <span className={`text-sm font-medium ${copy.text}`}>
+              {copy.label}
+            </span>
+          </div>
+          {action}
         </div>
       </header>
 

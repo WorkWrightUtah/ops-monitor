@@ -14,29 +14,40 @@ was made in [`docs/decisions.md`](./docs/decisions.md).
 
 ## Runbook: how to add a target
 
-This is the thing you'll do most often. It takes about a minute and needs no code and no deploy.
+This is the thing you'll do most often. It takes about fifteen seconds, on the dashboard itself —
+no Supabase, no code, no deploy.
 
-1. Open the **Supabase dashboard** → project **ops-monitor** → **Table Editor** → **`targets`**.
-2. **Insert row.** Fill three columns and leave the rest alone:
+1. Sign in at **<https://status.workwright.co>**.
+2. Scroll to **Add a site** at the bottom.
+3. Fill in two boxes and press **Add site**:
 
-   | Column | What to put | Example |
+   | Box | What to put | Example |
    |---|---|---|
-   | `name` | A human label. This is what appears on the dashboard tile and in the alert subject line. | `WorkWright marketing site` |
-   | `url` | The full URL to fetch, including `https://`. Must be `http://` or `https://` — the database rejects anything else. | `https://workwright.co` |
-   | `active` | `true` to start checking it, `false` to leave it parked. | `true` |
+   | **Name** | A human label. This is what appears on the tile and in the alert subject line. | `WorkWright marketing site` |
+   | **Address** | The site to check. `https://` is assumed if you leave it off. | `workwright.co` |
 
-   Leave `id`, `created_at`, and `alerting` empty — the database fills them in. **Never set
-   `alerting` by hand;** the checker owns that column, and editing it will either suppress a real
-   alert or fire a spurious one.
+4. The tile appears immediately and the first check runs within five minutes.
 
-3. That's it. The checker picks it up on its next run, within five minutes. Watch the dashboard
-   tile appear at `https://status.workwright.co`.
+If something's wrong with what you typed, the form says so in plain words and nothing is saved.
+It will refuse a URL that isn't a real domain, isn't `http`/`https`, or is already on the board.
 
-### Removing or pausing a target
+### Removing a target
 
-- **Pause:** set `active` to `false`. History is kept; checking stops. If the target had an open
-  alert, you'll get one recovery notice closing it out — that's intentional, not a bug.
-- **Delete:** delete the row. Its entire check history goes with it. Prefer pausing.
+Each tile has a **Remove** link in its top-right corner. It asks once, because **removing a target
+deletes its entire check history along with it** — that's a database cascade, and there's no undo.
+
+If you only want to stop checking something for a while and keep the history, that's a **pause**,
+and it's still a Supabase edit: Table Editor → `targets` → set `active` to `false`. If the target
+had an open alert, pausing sends one recovery notice closing it out — intentional, not a bug.
+
+> There's deliberately no pause button on the dashboard yet. Add and remove covered what was asked
+> for; if pausing turns out to be the thing you reach for, it's a small addition.
+
+### Never edit these by hand
+
+`id`, `created_at`, and `alerting` are the database's and the checker's business. **Never set
+`alerting` yourself** — the checker owns it, and changing it will either suppress a real alert or
+fire a spurious one.
 
 ### Things worth knowing
 
@@ -55,7 +66,7 @@ The rules, exactly:
 | Situation | What happens |
 |---|---|
 | A check fails once | **Nothing.** One blip is not an outage. |
-| A second check fails in a row | **One alert** — a Resend email to `hello@workwright.co` *and* an Adaptive Card in the Teams channel. |
+| A second check fails in a row | **One alert** — a Resend email to `claude@workwright.co` *and* an Adaptive Card in the Teams channel. |
 | It keeps failing | **Nothing more.** One outage produces one alert, however long it lasts. |
 | It responds successfully again | **One recovery notice** to the same two channels. |
 | You pause a target that was alerting | **One recovery notice**, closing the alert out. |

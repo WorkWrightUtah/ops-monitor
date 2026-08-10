@@ -3,6 +3,67 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-10 — Targets are added and removed from the dashboard, not from Supabase
+**Why:** Ryan asked for it, and the runbook's weakest step was the one that sent a non-technical
+owner into a production table editor to hand-type a URL. The form writes through the *request-scoped*
+Supabase client, so inserts and deletes pass the same team-only RLS policies as the reads — the
+`targets_insert_team` / `targets_delete_team` policies written on day one are finally being used by
+something other than a test. The service_role client stays where it was, in the checker, and is
+still never imported from `src/app/`.
+**Two details that carry weight:**
+- A delete refused by RLS returns *no error and no rows* from PostgREST — indistinguishable from
+  success. `deleteTarget` calls `.select()` and treats zero rows as a failure, so a refusal can
+  never be reported as a removal.
+- The visible controls are gated on an email-domain check that mirrors `is_team_member()`. That is
+  display only, duplicated deliberately and marked as such; the database remains the authority and
+  the actions surface its refusal in words.
+**Revisit if:** pausing (`active`) becomes something anyone reaches for. Add and remove were the
+ask; pause is still a Supabase edit, and the README says so plainly rather than implying the
+dashboard is the whole story.
+
+## 2026-08-10 — URL normalising is its own tested module, and refuses credentials
+**Why:** the form accepts `workwright.co` and assumes `https://`, because that is what people type.
+The first implementation did that by prepending the scheme whenever the string didn't start with
+`http`, which a test immediately caught as unsound: `mailto:ryan@workwright.co` became
+`https://mailto:ryan@workwright.co`, which parses *successfully* with `mailto:ryan` as credentials
+and `workwright.co` as the host — a rejected input silently turning into a valid, different target.
+The same hole accepts `https://workwright.co@evil.com`, which the dashboard and every alert would
+then print verbatim while checking `evil.com`.
+**Now:** the scheme is identified before anything is prepended (distinguishing `mailto:` from a
+`:8080` port), and any URL carrying user info is refused. Ten cases live in
+`src/lib/target-url.test.ts`.
+**The lesson repeats:** this was found by testing the pure function, not the form. Same shape as
+the `hello@` bounce — the operation reported success while doing something other than what it said.
+**Revisit if:** we ever need authenticated health checks. That wants a credentials column and a
+secret store, not a URL string.
+
+## 2026-08-10 — `targets.url` gets a unique index
+**Why:** the README already claimed "one URL, one row — the database enforces it." **It did not.**
+No unique constraint existed; the claim had been true only in the sense that nobody had tried.
+Moving adds to a form makes double-pasting a site an easy accident, and two rows for one URL means
+two checks every five minutes and two alerts with nothing in an inbox to tell them apart. The index
+makes the sentence true and gives the form a `23505` to turn into "already on the board."
+**Not `lower(url)`:** hostnames are case-insensitive and the URL parser already lowercases them, but
+paths are case-sensitive — `/Status` and `/status` may be genuinely different pages.
+
+## 2026-08-10 — Confirmation links land on `/auth/confirmed`, a page that exists
+**Why:** the previous fix built `/auth/confirm` and `/auth/callback` and then showed a green banner
+on the dashboard. That was still wrong twice over. First, Supabase's default template does not link
+to our routes at all — it links to *its own* `/auth/v1/verify`, which confirms server-side and then
+redirects to whatever `redirect_to` says, so our confirm route was never reached. Second,
+`redirect_to` was `http://localhost:3000`, because it falls back to the project's Site URL.
+**Now:** `signUp` passes an explicit `emailRedirectTo` built from the request headers, so the link
+returns to whichever host the person actually signed up on; `/auth/callback` is the door the default
+template uses, and it ends at a real page that says the words.
+**A failed code exchange is not a failed confirmation.** Reaching the callback without an error
+param means Supabase already verified the address — the exchange fails separately when the link is
+opened in a different browser, since the PKCE verifier is a cookie. That case lands on the same page
+in its signed-out wording rather than being reported as a broken link.
+**Still requires a Supabase dashboard change:** `emailRedirectTo` is only honoured if the URL is in
+the project's allowed Redirect URLs. Until `https://status.workwright.co/**` is listed *and* the
+Site URL is off localhost, Supabase substitutes the Site URL and the link goes nowhere useful. This
+is a project setting, not code, and the Management API token needed to set it isn't in this repo.
+
 ## 2026-08-08 — Alert email settles on `claude@workwright.co` (supersedes the `benson@` entry below)
 **Why:** a shared mailbox that Benson and Ryan both read. That resolves the objection raised
 against `benson@` — an alert landing in one person's inbox goes unread when they are away and

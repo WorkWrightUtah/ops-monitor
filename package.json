@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start -H 0.0.0.0",
     "lint": "eslint",
-    "test": "tsx --test src/checker/*.test.ts",
+    "test": "tsx --test src/checker/*.test.ts src/lib/*.test.ts",
     "check": "tsx src/checker/run.ts",
     "check:local": "tsx --env-file=.env.local src/checker/run.ts"
   },

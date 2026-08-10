@@ -1,4 +1,6 @@
+import { AddTargetForm } from "@/components/add-target-form";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { DeleteTargetButton } from "@/components/delete-target-button";
 import { StatusTile, type TargetStatus } from "@/components/status-tile";
 import type { ChartPoint } from "@/components/response-chart";
 import { isoHoursAgo } from "@/lib/format";
@@ -8,13 +10,7 @@ import { signOut } from "./login/actions";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Ops Monitor" };
 
-export default async function Dashboard({ searchParams }: PageProps<"/">) {
-  // Set by the auth confirm/callback routes. Landing silently after clicking
-  // "confirm your email" leaves people wondering whether it worked.
-  const params = await searchParams;
-  const justConfirmed =
-    (Array.isArray(params.confirmed) ? params.confirmed[0] : params.confirmed) === "1";
-
+export default async function Dashboard() {
   const supabase = await createClient();
 
   const {
@@ -52,6 +48,11 @@ export default async function Dashboard({ searchParams }: PageProps<"/">) {
   const watched = targets.filter((t) => t.active);
   const down = watched.filter((t) => t.last_ok === false);
 
+  // Mirrors public.is_team_member() to decide whether to show the controls.
+  // Display only — the database still decides who may actually write, and the
+  // actions surface its refusal rather than trusting this.
+  const canManage = (user?.email ?? "").toLowerCase().endsWith("@workwright.co");
+
   return (
     <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <AutoRefresh seconds={60} />
@@ -87,15 +88,6 @@ export default async function Dashboard({ searchParams }: PageProps<"/">) {
         </div>
       </header>
 
-      {justConfirmed ? (
-        <p
-          role="status"
-          className="mt-6 rounded-md border border-up/30 bg-up/10 px-3 py-2 text-sm text-up"
-        >
-          Email confirmed — you&rsquo;re signed in.
-        </p>
-      ) : null}
-
       {loadError ? (
         <p
           role="alert"
@@ -120,9 +112,16 @@ export default async function Dashboard({ searchParams }: PageProps<"/">) {
             key={target.id}
             target={target}
             history={historyByTarget.get(target.id) ?? []}
+            action={
+              canManage ? (
+                <DeleteTargetButton id={target.id} name={target.name} />
+              ) : null
+            }
           />
         ))}
       </div>
+
+      {canManage ? <AddTargetForm /> : null}
     </main>
   );
 }
