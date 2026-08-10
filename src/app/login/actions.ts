@@ -1,8 +1,24 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+
+// Where confirmation links should come back to.
+//
+// Read from the request rather than hardcoded, so the link works the same in
+// local dev and in production. Supabase only honours this if the URL matches
+// the project's allowed Redirect URLs; otherwise it silently substitutes the
+// project's Site URL — which is how confirmation emails ended up pointing at
+// localhost. See docs/decisions.md.
+async function requestOrigin(): Promise<string | undefined> {
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+  if (!host) return undefined;
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  return `${proto}://${host}`;
+}
 
 // Only ever redirect to a path on this site. Without this check, a crafted
 // ?next=https://evil.example link would turn our login form into an open
@@ -46,8 +62,14 @@ export async function signUp(formData: FormData) {
 
   if (!email || !password) backToLogin("Enter your email and password.", next);
 
+  const origin = await requestOrigin();
+
   const supabase = await createClient();
-  const { data, error } = await supabase.auth.signUp({ email, password });
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: origin ? { emailRedirectTo: `${origin}/auth/callback` } : undefined,
+  });
 
   if (error) backToLogin(error.message, next);
 

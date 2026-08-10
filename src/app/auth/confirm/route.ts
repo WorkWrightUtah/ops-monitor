@@ -15,7 +15,9 @@ import { createClient } from "@/lib/supabase/server";
 function safeNext(value: string | null): string {
   // Only ever redirect within this site — a crafted ?next= would otherwise
   // turn a link we email out into an open redirect.
-  return value && value.startsWith("/") && !value.startsWith("//") ? value : "/";
+  return value && value.startsWith("/") && !value.startsWith("//")
+    ? value
+    : "/auth/confirmed";
 }
 
 export async function GET(request: NextRequest) {
@@ -55,5 +57,5 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  return NextResponse.redirect(`${origin}${next}?confirmed=1`);
+  return NextResponse.redirect(`${origin}${next}`);
 }
