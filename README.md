@@ -92,6 +92,9 @@ So `401`, `403` and `429` are recorded as **Blocked**, not Down:
   healthy, and we hardly got to look.
 - They don't count toward an alert **or** toward a recovery. A target that was genuinely down and
   then starts blocking us keeps its open alert, because we no longer know anything.
+- A **short** block is looked past — two failures either side of one skipped check still count as
+  consecutive. A block longer than ~15 minutes (3 checks) cuts the history off instead: whatever we
+  saw on the far side is too stale to chain onto what we're seeing now.
 
 **Every other `4xx` still alerts**, including `404` — a missing page is a real problem for whoever
 was trying to visit it.

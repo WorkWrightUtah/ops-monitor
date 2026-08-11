@@ -53,17 +53,55 @@ function leadingRun(recent: CheckOutcome[], want: CheckOutcome): number {
 }
 
 /**
- * Drop the checks that told us nothing.
+ * How many refusals in a row we will look past before giving up on the history
+ * behind them.
+ *
+ * Checks run every five minutes, so three is about fifteen minutes of not
+ * knowing. Beyond that, whatever we saw on the far side is no longer evidence
+ * about *now* — the site had a quarter of an hour to change while we weren't
+ * being allowed to look.
+ */
+export const MAX_BLOCKED_GAP = 3;
+
+/**
+ * Drop the checks that told us nothing — but do not pretend the gap they leave
+ * behind never happened.
  *
  * A refusal is not evidence for either side of the question "is this site
  * serving customers?", so it neither builds toward an alert nor counts as a
- * recovery — it is simply not counted. The practical effect is that a blocked
- * target holds whatever state it was already in: if it was healthy it stays
- * healthy, and if we had already reported it down, that report stays open
- * until real checks contradict it.
+ * recovery. The practical effect is that a blocked target holds whatever state
+ * it was already in: if it was healthy it stays healthy, and if we had already
+ * reported it down, that report stays open until real checks contradict it.
+ *
+ * The subtlety, learned the hard way an hour after this function was written:
+ * simply filtering refusals out welds the two sides of a long block together.
+ * On 2026-08-11 that made a check at 11:10 and a check at 10:30 read as two
+ * consecutive successes — 2h20m apart, with 28 refusals between them — which
+ * satisfied the recovery threshold and sent a notice on the strength of a
+ * reading that was two hours stale. Had those two checks been failures instead,
+ * the same arithmetic would have paged someone.
+ *
+ * So a long enough run of refusals stops the walk entirely. Two checks either
+ * side of a fifteen-minute blind spot are not consecutive in any sense worth
+ * acting on.
  */
 function informative(recent: CheckOutcome[]): CheckOutcome[] {
-  return recent.filter((outcome) => outcome !== "blocked");
+  const known: CheckOutcome[] = [];
+  let gap = 0;
+
+  for (const outcome of recent) {
+    if (outcome === "blocked") {
+      gap += 1;
+      // Everything older than this blind spot is out of reach, not merely
+      // skipped. Stop rather than continue.
+      if (gap > MAX_BLOCKED_GAP) break;
+      continue;
+    }
+    gap = 0;
+    known.push(outcome);
+  }
+
+  return known;
 }
 
 /** How many checks at the newest end of the history failed in a row. */

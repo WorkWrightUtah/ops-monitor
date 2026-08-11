@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { CheckOutcome } from "../lib/check-outcome";
-import { consecutiveFailures, consecutiveSuccesses, decide } from "./alert-rules";
+import {
+  consecutiveFailures,
+  consecutiveSuccesses,
+  decide,
+  MAX_BLOCKED_GAP,
+} from "./alert-rules";
 
 // The spec calls alerting "the feature this tool exists for" and says to test
 // it early. These run in milliseconds against the pure rules, so the five
@@ -55,12 +60,68 @@ test("consecutiveFailures counts only the unbroken run at the newest end", () =>
 
 test("refusals are skipped when counting runs, not treated as failures", () => {
   // The whole point: a block tells us nothing, so it must not build toward an
-  // alert — but it must not break a genuine run of failures either.
+  // alert — but a short one must not break a genuine run of failures either.
   assert.equal(consecutiveFailures([blocked, blocked, blocked]), 0);
   assert.equal(consecutiveFailures([blocked, down, down]), 2);
   assert.equal(consecutiveFailures([down, blocked, down]), 2);
   assert.equal(consecutiveSuccesses([blocked, up, up]), 2);
   assert.equal(consecutiveSuccesses([blocked, up, down]), 1);
+});
+
+test("a long block cuts the history off rather than welding it together", () => {
+  // 2026-08-11, an hour after the first fix: filtering refusals out made a
+  // check at 11:10 and one at 10:30 read as consecutive successes, 2h20m and
+  // 28 refusals apart. That satisfied the recovery threshold on two-hour-old
+  // evidence. The same arithmetic on failures would have paged someone.
+  const longBlock = Array<CheckOutcome>(MAX_BLOCKED_GAP + 1).fill(blocked);
+
+  assert.equal(
+    consecutiveSuccesses([up, ...longBlock, up]),
+    1,
+    "the older success is on the far side of a blind spot — it does not count",
+  );
+  assert.equal(
+    consecutiveFailures([down, ...longBlock, down]),
+    1,
+    "and the same must hold for failures, which is the dangerous direction",
+  );
+
+  // A gap short enough to see across still chains, or the rule would make the
+  // monitor useless on any site that occasionally rate-limits us.
+  const shortBlock = Array<CheckOutcome>(MAX_BLOCKED_GAP).fill(blocked);
+  assert.equal(consecutiveFailures([down, ...shortBlock, down]), 2);
+});
+
+test("stale evidence across a long block cannot fire an alert", () => {
+  assert.equal(
+    decide({
+      active: true,
+      alerting: false,
+      recent: [down, blocked, blocked, blocked, blocked, down, down],
+    }),
+    "none",
+    "one fresh failure plus a two-hour-old one is not two in a row",
+  );
+});
+
+test("stale evidence across a long block cannot fire a recovery", () => {
+  assert.equal(
+    decide({
+      active: true,
+      alerting: true,
+      recent: [up, blocked, blocked, blocked, blocked, up, down, down],
+    }),
+    "none",
+  );
+  // Two fresh successes on this side of the block do resolve it.
+  assert.equal(
+    decide({
+      active: true,
+      alerting: true,
+      recent: [up, up, blocked, blocked, blocked, blocked, down, down],
+    }),
+    "recover",
+  );
 });
 
 test("one failed check is not enough to alert", () => {

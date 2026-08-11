@@ -23,6 +23,18 @@ So refusals are skipped when counting runs — they build toward neither an aler
 a target holds whatever state it was already in. An open alert on a genuinely-down target that then
 starts blocking us stays open rather than being quietly retracted on no evidence.
 
+**Correction, one hour later — a long block now cuts the history off.** The first version of this
+simply filtered refusals out, which welds the two sides of a block together. Deployed at 11:05; at
+11:10 the checker read a success at 11:10 and a success at 10:30 as *two consecutive successes*,
+2h20m and 28 refusals apart, satisfied the recovery threshold on two-hour-old evidence, and emailed
+"Recovered". The outcome was harmless — it closed out the false alarm, and the flag needed clearing
+anyway — but the mechanism was wrong, and the mirror image is not harmless: two failures either
+side of a long block would have paged someone as though they had happened back to back. A run of
+more than `MAX_BLOCKED_GAP` (3, about fifteen minutes) now stops the walk rather than being skipped
+over. Two checks either side of a fifteen-minute blind spot are not consecutive in any sense worth
+acting on. **Worth noting how it was caught:** not by the tests, which all passed, but by watching
+what the thing actually did on the first cycle after deploying.
+
 **How it was found:** running the checker's exact code path and exact user-agent from a laptop
 returned `200`; so did a fetch from an unrelated datacenter; and the checker itself got a `200` at
 10:30 in the middle of the "outage". The tell was in the data all along — refusals came back in
