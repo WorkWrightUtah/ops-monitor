@@ -132,6 +132,12 @@ const handler = {
     } catch {
       // Same convention as the checker: no HTTP response arrived, so there is
       // no status code to report and we do not invent one.
+      //
+      // In practice this branch is rarer than it looks. Cloudflare's fetch
+      // synthesises a status for most network-level failures rather than
+      // throwing — an unresolvable host comes back as 530, not an exception.
+      // That still classifies as "down", so the verdict is right either way,
+      // but do not read a shortage of nulls here as the path being untested.
       return json({
         status_code: null,
         response_ms: Date.now() - started,
