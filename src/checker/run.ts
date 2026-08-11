@@ -151,7 +151,17 @@ async function processActive(supabase: Supabase, target: Target) {
   }
 
   if (result.outcome === "blocked" && outcome === "down") {
-    log(`    both networks were refused — treating this as a real outage.`);
+    // Two different stories end here and they are worth telling apart in the
+    // log. "Both refused" is the corroborated-refusal case the second vantage
+    // exists for; the other is us being refused while an independent network
+    // saw the site genuinely failing, which is a stronger signal, not a
+    // weaker one. Printing "both networks were refused" for both was wrong,
+    // and it made a live test look like it had exercised a path it had not.
+    log(
+      second.outcome === "blocked"
+        ? `    both networks were refused — treating this as a real outage.`
+        : `    we were refused; the second vantage saw a genuine failure — treating this as a real outage.`,
+    );
   }
 
   // Read back the tail *including* the row just written, so the threshold is
