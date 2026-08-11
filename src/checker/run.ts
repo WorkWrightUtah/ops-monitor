@@ -103,8 +103,10 @@ async function processActive(supabase: Supabase, target: Target) {
   // response needs no corroboration, and this keeps the Worker's traffic
   // proportional to trouble rather than to time.
   const second =
-    result.outcome === "up" ? "unavailable" : await askSecondVantage(target.url);
-  const outcome = reconcile(result.outcome, second);
+    result.outcome === "up"
+      ? { outcome: "unavailable" as const, detail: "not asked" }
+      : await askSecondVantage(target.url);
+  const outcome = reconcile(result.outcome, second.outcome);
 
   const checkedAt = new Date().toISOString();
 
@@ -138,7 +140,10 @@ async function processActive(supabase: Supabase, target: Target) {
   );
 
   if (result.outcome !== "up") {
-    log(`    we saw ${result.outcome}; second vantage saw ${second}`);
+    log(
+      `    we saw ${result.outcome}; second vantage saw ${second.outcome}` +
+        (second.detail ? ` (${second.detail})` : ""),
+    );
   }
 
   if (outcome === "blocked") {
