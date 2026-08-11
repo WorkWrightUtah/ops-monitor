@@ -6,8 +6,16 @@
 
 import type { CheckOutcome } from "../lib/check-outcome";
 
-/** Consecutive failed checks before we tell anyone. From the spec. */
-export const FAILURE_THRESHOLD = 2;
+/**
+ * Consecutive failed checks before we tell anyone.
+ *
+ * The spec said two. Raised to three on 2026-08-11 at Ryan's call, after a day
+ * of alerts he didn't believe. Three failures spans ten minutes rather than
+ * five, so a real outage is reported five minutes later than it used to be —
+ * that is the price, and it was paid deliberately to buy back trust in the
+ * alerts that do arrive.
+ */
+export const FAILURE_THRESHOLD = 3;
 
 /**
  * Consecutive good checks before we announce a recovery.

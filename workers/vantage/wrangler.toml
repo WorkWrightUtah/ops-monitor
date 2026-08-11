@@ -1,0 +1,18 @@
+# Second vantage point — see src/index.ts for why it exists.
+#
+# Deployed to Ryan's Cloudflare account (the same one holding the workwright.co
+# zone). No routes and no custom domain: it answers on its own workers.dev
+# hostname, which is all the checker needs and keeps it off the zone that
+# serves status.workwright.co.
+#
+# account_id is read from the CLOUDFLARE_ACCOUNT_ID environment variable rather
+# than written here — see README "Deploying the second vantage".
+
+name = "ops-monitor-vantage"
+main = "src/index.ts"
+compatibility_date = "2026-08-11"
+
+# No KV, no D1, no queues. It holds no state on purpose.
+
+[observability]
+enabled = true

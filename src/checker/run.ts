@@ -5,10 +5,11 @@
 // web process on purpose — a redeploy or idle-sleep of the dashboard must not
 // be able to silently stop the monitoring.
 
-import { outcomeOf } from "../lib/check-outcome";
+import { outcomeOf, reconcile, type CheckOutcome } from "../lib/check-outcome";
 import { decide, type AlertAction } from "./alert-rules";
 import { checkUrl, type CheckResult } from "./http-check";
 import { sendNotice } from "./notify";
+import { askSecondVantage } from "./second-opinion";
 import { createAdminClient } from "./supabase";
 
 /**
@@ -97,6 +98,14 @@ async function processActive(supabase: Supabase, target: Target) {
   await sleep(Math.random() * JITTER_MS);
 
   const result = await checkUrl(target.url);
+
+  // Only bother a second network when our own answer is bad news. A healthy
+  // response needs no corroboration, and this keeps the Worker's traffic
+  // proportional to trouble rather than to time.
+  const second =
+    result.outcome === "up" ? "unavailable" : await askSecondVantage(target.url);
+  const outcome = reconcile(result.outcome, second);
+
   const checkedAt = new Date().toISOString();
 
   const { error: insertError } = await supabase.from("checks").insert({
@@ -105,6 +114,10 @@ async function processActive(supabase: Supabase, target: Target) {
     status_code: result.status_code,
     response_ms: result.response_ms,
     ok: result.ok,
+    // The reconciled verdict, not the raw status. Two rows with the same
+    // status code can now mean opposite things, so it is written down here
+    // rather than re-derived later from evidence that no longer contains it.
+    outcome,
   });
 
   if (insertError) {
@@ -116,11 +129,7 @@ async function processActive(supabase: Supabase, target: Target) {
   }
 
   const label =
-    result.outcome === "up"
-      ? "up"
-      : result.outcome === "blocked"
-        ? "BLOCKED"
-        : "DOWN";
+    outcome === "up" ? "up" : outcome === "blocked" ? "BLOCKED" : "DOWN";
 
   log(
     `  ${target.name}: ${label} ` +
@@ -128,21 +137,26 @@ async function processActive(supabase: Supabase, target: Target) {
       `${result.attempts > 1 ? `, ${result.attempts} attempts` : ""})`,
   );
 
-  if (result.outcome === "blocked") {
-    log(
-      `    refused, not down — something answered. Nobody is being paged for this.`,
-    );
+  if (result.outcome !== "up") {
+    log(`    we saw ${result.outcome}; second vantage saw ${second}`);
+  }
+
+  if (outcome === "blocked") {
+    log(`    refused, not down — nobody is being paged for this.`);
+  }
+
+  if (result.outcome === "blocked" && outcome === "down") {
+    log(`    both networks were refused — treating this as a real outage.`);
   }
 
   // Read back the tail *including* the row just written, so the threshold is
   // counted against what is actually stored rather than what we think we wrote.
   //
-  // status_code comes back too: the outcome is derived from it rather than
-  // stored, so old rows reclassify themselves under the current rules instead
-  // of freezing yesterday's verdict into the history.
+  // status_code comes back too, as a fallback for rows written before
+  // checks.outcome existed — or by a checker mid-deploy that did not set it.
   const { data: recent, error: historyError } = await supabase
     .from("checks")
-    .select("status_code")
+    .select("outcome, status_code")
     .eq("target_id", target.id)
     .order("checked_at", { ascending: false })
     .limit(HISTORY_WINDOW);
@@ -155,7 +169,9 @@ async function processActive(supabase: Supabase, target: Target) {
   const action = decide({
     active: true,
     alerting: target.alerting,
-    recent: (recent ?? []).map((row) => outcomeOf(row.status_code)),
+    recent: (recent ?? []).map(
+      (row) => (row.outcome as CheckOutcome | null) ?? outcomeOf(row.status_code),
+    ),
   });
 
   if (action !== "none") {

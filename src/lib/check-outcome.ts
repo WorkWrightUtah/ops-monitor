@@ -61,3 +61,55 @@ export function outcomeOf(status: number | null): CheckOutcome {
   if (isHealthyStatus(status)) return "up";
   return isRefusal(status) ? "blocked" : "down";
 }
+
+/**
+ * What a second vantage point said, or that we couldn't reach it.
+ *
+ * "unavailable" is a first-class answer rather than an error: the second
+ * opinion is an improvement to lean on, never a dependency to fail on. If the
+ * Worker is down, misconfigured, or simply not set up yet, the monitor must
+ * carry on doing what it did before.
+ */
+export type SecondOpinion = CheckOutcome | "unavailable";
+
+/**
+ * Combine what we saw with what an independent network saw.
+ *
+ * This is the whole point of the second vantage: one checker in one datacenter
+ * cannot tell "the site is refusing everyone" from "the site is refusing us",
+ * and those need opposite responses. Two vantages can, and the answer moves in
+ * both directions:
+ *
+ *   local    second      final     why
+ *   ------   ---------   -------   ----------------------------------------
+ *   up       (not asked) up        nothing to corroborate
+ *   down     up          blocked   the site is fine; our vantage is the
+ *                                  problem. Do not page someone over our own
+ *                                  network.
+ *   down     down|block  down      corroborated. A real outage.
+ *   blocked  up          blocked   confirmed: it is us being refused.
+ *   blocked  blocked     DOWN      both networks refused. Nobody can reach
+ *                                  this site — that is an outage from a
+ *                                  visitor's chair, whatever the status code.
+ *   blocked  down        down      it is broken for them; the 403 we got is
+ *                                  not the interesting part.
+ *   *        unavailable local     no new information, so no new conclusion.
+ *
+ * The `blocked + blocked -> down` row is the one that buys back the coverage
+ * we gave up by not paging on refusals at all. It is also the row most likely
+ * to be wrong, because Cloudflare's egress is still a datacenter and a filter
+ * strict enough to refuse us might refuse it too. Two independent networks
+ * both being turned away for FAILURE_THRESHOLD consecutive checks is decent
+ * evidence, but it is evidence, not proof — if this ever pages falsely, this
+ * row is the first thing to reconsider.
+ */
+export function reconcile(
+  local: CheckOutcome,
+  second: SecondOpinion,
+): CheckOutcome {
+  if (local === "up") return "up";
+  if (second === "unavailable") return local;
+  if (second === "up") return "blocked";
+  if (local === "blocked" && second === "blocked") return "down";
+  return "down";
+}

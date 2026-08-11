@@ -1,3 +1,4 @@
+import { FAILURE_THRESHOLD } from "./alert-rules";
 import type { CheckResult } from "./http-check";
 
 export type NoticeKind = "down" | "recovered";
@@ -54,7 +55,7 @@ export function bodyFor(
   const lines =
     kind === "down"
       ? [
-          `${target.name} failed two checks in a row and looks down.`,
+          `${target.name} failed ${FAILURE_THRESHOLD} checks in a row and looks down.`,
           "",
           `URL:      ${target.url}`,
           `Reason:   ${reason(result)}`,

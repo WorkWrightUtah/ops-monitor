@@ -6,6 +6,7 @@ import {
   consecutiveFailures,
   consecutiveSuccesses,
   decide,
+  FAILURE_THRESHOLD,
   MAX_BLOCKED_GAP,
 } from "./alert-rules";
 
@@ -124,17 +125,30 @@ test("stale evidence across a long block cannot fire a recovery", () => {
   );
 });
 
-test("one failed check is not enough to alert", () => {
-  assert.equal(
-    decide({ active: true, alerting: false, recent: [down, up, up] }),
-    "none",
-    "a single blip must stay quiet — that is what the threshold is for",
-  );
+test("failures below the threshold stay quiet", () => {
+  // Ryan raised this from two to three on 2026-08-11 after a day of alerts he
+  // didn't believe. Walk up to the threshold rather than hardcoding a count,
+  // so retuning it again does not quietly turn this test into a tautology.
+  for (let n = 1; n < FAILURE_THRESHOLD; n += 1) {
+    assert.equal(
+      decide({
+        active: true,
+        alerting: false,
+        recent: [...Array<CheckOutcome>(n).fill(down), up, up],
+      }),
+      "none",
+      `${n} failure(s) is below the threshold and must stay quiet`,
+    );
+  }
 });
 
-test("two consecutive failures fire exactly one alert", () => {
+test("the threshold fires exactly one alert", () => {
   assert.equal(
-    decide({ active: true, alerting: false, recent: [down, down, up] }),
+    decide({
+      active: true,
+      alerting: false,
+      recent: [...Array<CheckOutcome>(FAILURE_THRESHOLD).fill(down), up],
+    }),
     "alert",
   );
 });
@@ -267,9 +281,10 @@ test("replaying 2026-08-11 sends nothing at all", () => {
 test("a real outage during a block is still caught", () => {
   // The failure mode to guard against while fixing the other one: if refusals
   // made us blind, a genuine outage inside a blocked stretch would go unheard.
-  // Two real failures alert no matter how much noise surrounds them.
+  // Enough real failures alert no matter how much noise surrounds them — as
+  // long as no single blocked run is long enough to cut the history off.
   assert.deepEqual(
-    replay([up, blocked, blocked, down, blocked, down, blocked, up, up]),
+    replay([up, blocked, down, blocked, down, blocked, down, up, up]),
     ["down", "recovered"],
   );
 });

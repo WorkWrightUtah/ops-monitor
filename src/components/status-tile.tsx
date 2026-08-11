@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { ResponseChart, type ChartPoint } from "@/components/response-chart";
-import { isRefusal } from "@/lib/check-outcome";
+import { outcomeOf, type CheckOutcome } from "@/lib/check-outcome";
 import {
   formatMs,
   formatRelative,
@@ -18,6 +18,8 @@ export type TargetStatus = {
   last_status_code: number | null;
   last_response_ms: number | null;
   last_ok: boolean | null;
+  /** The recorded verdict. Null only for rows written before it was stored. */
+  last_outcome: CheckOutcome | null;
   uptime_24h: number | null;
   checks_24h: number;
   uptime_7d: number | null;
@@ -29,10 +31,13 @@ type State = "up" | "down" | "blocked" | "paused" | "unknown";
 function stateOf(target: TargetStatus): State {
   if (!target.active) return "paused";
   if (target.last_ok === null) return "unknown";
-  if (target.last_ok) return "up";
-  // Something answered and refused us. That is not an outage, and colouring it
-  // red taught Ryan to distrust the red. See lib/check-outcome.ts.
-  return isRefusal(target.last_status_code) ? "blocked" : "down";
+  // The recorded verdict, not the status code. A 403 that a second vantage
+  // point also received is a real outage, and a tile showing amber "Blocked"
+  // beside an email saying DOWN is how a board stops being believed.
+  // outcomeOf() only covers rows written before the verdict was stored.
+  const outcome = target.last_outcome ?? outcomeOf(target.last_status_code);
+  if (outcome === "up") return "up";
+  return outcome === "blocked" ? "blocked" : "down";
 }
 
 const STATE_COPY: Record<State, { label: string; dot: string; text: string }> = {

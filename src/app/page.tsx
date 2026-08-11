@@ -3,7 +3,7 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { DeleteTargetButton } from "@/components/delete-target-button";
 import { StatusTile, type TargetStatus } from "@/components/status-tile";
 import type { ChartPoint } from "@/components/response-chart";
-import { isRefusal } from "@/lib/check-outcome";
+import { outcomeOf } from "@/lib/check-outcome";
 import { isoHoursAgo } from "@/lib/format";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "./login/actions";
@@ -26,7 +26,7 @@ export default async function Dashboard() {
     supabase.from("target_status").select("*").order("name"),
     supabase
       .from("checks")
-      .select("target_id, checked_at, response_ms, ok, status_code")
+      .select("target_id, checked_at, response_ms, ok, status_code, outcome")
       .gte("checked_at", since)
       .order("checked_at", { ascending: true }),
   ]);
@@ -43,6 +43,7 @@ export default async function Dashboard() {
       response_ms: row.response_ms,
       ok: row.ok,
       status_code: row.status_code,
+      outcome: row.outcome as ChartPoint["outcome"],
     });
     historyByTarget.set(row.target_id, points);
   }
@@ -50,11 +51,13 @@ export default async function Dashboard() {
   const watched = targets.filter((t) => t.active);
   // A refused check is not a failed one. Counting blocked targets as "down"
   // here is the same mistake the alert rules used to make, one screen over.
+  const outcomeFor = (t: TargetStatus) =>
+    t.last_outcome ?? outcomeOf(t.last_status_code);
   const failing = watched.filter(
-    (t) => t.last_ok === false && !isRefusal(t.last_status_code),
+    (t) => t.last_ok === false && outcomeFor(t) === "down",
   );
   const blocked = watched.filter(
-    (t) => t.last_ok === false && isRefusal(t.last_status_code),
+    (t) => t.last_ok === false && outcomeFor(t) === "blocked",
   );
 
   const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);

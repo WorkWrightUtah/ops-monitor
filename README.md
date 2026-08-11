@@ -69,8 +69,8 @@ The rules, exactly:
 
 | Situation | What happens |
 |---|---|
-| A check fails once | **Nothing.** One blip is not an outage. |
-| A second check fails in a row | **One alert** — a Resend email to `claude@workwright.co` *and* an Adaptive Card in the Teams channel. |
+| A check fails once or twice | **Nothing.** One blip is not an outage. |
+| A **third** check fails in a row | **One alert** — a Resend email to `claude@workwright.co` *and* an Adaptive Card in the Teams channel. |
 | It keeps failing | **Nothing more.** One outage produces one alert, however long it lasts. |
 | It responds successfully **twice** in a row | **One recovery notice** to the same two channels. |
 | The site **refuses** us (`401`, `403`, `429`) | **Nothing.** See "Blocked" below. |
@@ -108,6 +108,55 @@ WorkWright-OpsMonitor/1.0 (+https://status.workwright.co; ops@workwright.co)
 ```
 
 Until then the tool is honest about not knowing, which is the point.
+
+### The second vantage point
+
+One checker in one datacenter cannot tell *"the site is refusing everyone"* from *"the site is
+refusing us"* — and those need opposite responses. So when a check fails, the checker asks a
+Cloudflare Worker (`workers/vantage`) to try the same URL from a completely unrelated network, and
+combines the two readings:
+
+| We saw | The Worker saw | Verdict | Why |
+|---|---|---|---|
+| up | *(not asked)* | **up** | nothing to corroborate |
+| down | up | **blocked** | the site is fine; our network is the problem |
+| down | down or blocked | **down** | corroborated — a real outage |
+| blocked | up | **blocked** | confirmed: it's us being refused |
+| blocked | **blocked** | **down** | *nobody* can reach it — an outage from a visitor's chair |
+| anything | *unreachable* | *unchanged* | no new information, so no new conclusion |
+
+The second-to-last row is the important one: it buys back the coverage we gave up by not paging on
+refusals. A WAF rule broken badly enough to turn away two unrelated networks is turning away
+customers too.
+
+**If the Worker is unreachable, not configured, or rejects our token, the checker behaves exactly
+as it did before.** That is deliberate — the second opinion is an improvement to lean on, never a
+dependency that can take the monitor down with it.
+
+The verdict is stored on the check (`checks.outcome`) rather than re-derived later, because two
+checks with the same status code can now mean opposite things.
+
+#### Deploying the second vantage
+
+Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (both in `.env.local`, both in
+1Password), and a `workers.dev` subdomain registered on the Cloudflare account.
+
+```bash
+cd workers/vantage
+npx wrangler deploy
+npx wrangler secret put VANTAGE_TOKEN     # paste the shared secret
+```
+
+Then set two variables on the Railway **checker** service:
+
+| Variable | Value |
+|---|---|
+| `VANTAGE_URL` | the deployed Worker's URL |
+| `VANTAGE_TOKEN` | the same secret you gave `wrangler secret put` |
+
+Both must match or the Worker returns 401 and the checker quietly carries on without it — which is
+safe, but means you get none of the benefit. To confirm it is actually working, look for
+`second vantage saw ...` in the `checker` service logs after any failed check.
 
 **Why you won't get spammed:** a `targets.alerting` flag tracks whether a notice is outstanding.
 It's set only *after* a notice is actually delivered — so if both channels fail, the alert stays

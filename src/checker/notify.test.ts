@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { FAILURE_THRESHOLD } from "./alert-rules";
 import { bodyFor, reason, subjectFor } from "./notify";
 
 // The alert rules decide *whether* to speak; these decide *what gets said*.
@@ -56,7 +57,14 @@ test("an outage body carries url, reason, and the no-repeat promise", () => {
 
   assert.match(body, /https:\/\/workwright\.co/, "must say which URL");
   assert.match(body, /HTTP 500/, "must say why");
-  assert.match(body, /two checks in a row/i, "must say why it is alerting now");
+  // Reads the threshold rather than hardcoding it: the body has to keep
+  // telling the truth when the threshold is retuned, and the day it silently
+  // stops is the day it stops being worth reading.
+  assert.match(
+    body,
+    new RegExp(`${FAILURE_THRESHOLD} checks in a row`, "i"),
+    "must say why it is alerting now",
+  );
   // Someone woken by this needs to know silence afterwards is expected, not a
   // second outage going unreported.
   assert.match(body, /one more message when it comes back/i);

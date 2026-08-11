@@ -1,4 +1,4 @@
-import { outcomeOf } from "@/lib/check-outcome";
+import { outcomeOf, type CheckOutcome } from "@/lib/check-outcome";
 import { formatClock } from "@/lib/format";
 
 export type ChartPoint = {
@@ -6,6 +6,8 @@ export type ChartPoint = {
   response_ms: number;
   ok: boolean;
   status_code: number | null;
+  /** Recorded verdict; null only for rows predating the column. */
+  outcome: CheckOutcome | null;
 };
 
 // Plain inline SVG rather than a charting library: one line and a few dots do
@@ -33,7 +35,7 @@ export function ResponseChart({ points }: { points: ChartPoint[] }) {
   const plotted = points.map((p, i) => ({
     p,
     t: times[i],
-    outcome: outcomeOf(p.status_code),
+    outcome: p.outcome ?? outcomeOf(p.status_code),
   }));
 
   // A refusal's timing measures how fast we were turned away, not how fast the

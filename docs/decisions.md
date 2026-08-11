@@ -3,6 +3,61 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-11 — A second vantage point, and the threshold raised to three
+**Why:** both at Ryan's request, after a day of alerts he didn't believe. The threshold change is
+one line and a real trade: three consecutive failures spans ten minutes rather than five, so a
+genuine outage is now reported five minutes later than it used to be. That was paid deliberately to
+buy back trust in the alerts that do arrive — an alert nobody believes is worth less than one that
+comes late.
+
+**The Worker is the interesting half.** `workers/vantage` is a Cloudflare Worker that fetches a URL
+and reports the status code, nothing else. When our own check fails, the checker asks it and
+`reconcile()` combines the two readings. The point is not redundancy — it is that a single vantage
+point *cannot* distinguish "the site is refusing everyone" from "the site is refusing us", and
+those need opposite responses. Two unrelated networks can.
+
+**It moves the verdict in both directions**, which is what makes it worth the moving parts:
+`down` + a Worker that sees the site fine becomes `blocked` (do not page someone over our own
+network), and `blocked` + a Worker that is *also* refused becomes `down` (nobody can reach this
+site, whatever the status code says). That second case buys back the coverage we gave up an hour
+earlier by not paging on refusals at all.
+
+**The row most likely to be wrong** is `blocked + blocked -> down`. Cloudflare's egress is still a
+datacenter, and a filter strict enough to refuse us might refuse it too — in which case we are back
+to paging falsely, which is the thing we set out to stop. Three consecutive double-refusals is
+fifteen minutes of two independent networks being turned away, which is decent evidence but is
+evidence, not proof. **If this ever pages falsely, that row is the first thing to reconsider.**
+
+**Failure is not an error.** Unconfigured, unreachable, rate limited, rejecting our token, or
+returning nonsense all produce the same answer — "unavailable" — and the checker then behaves
+exactly as it did before. A monitoring tool must not be able to fall over because the thing that
+makes it better stopped working, and this shipped *before* the Worker was reachable precisely so
+that property got exercised rather than assumed.
+
+**`checks.outcome` now stores the verdict** instead of every reader deriving it from the status
+code. Two checks with identical status codes can now mean opposite things, so recomputing later
+from evidence that no longer contains the second reading would quietly produce a different answer
+than the one we alerted on. Nullable, with a fallback function, because a NOT NULL column would
+have broken every insert from the currently-deployed checker the moment the migration landed — and
+the gap between a migration and a deploy is exactly when a monitor must not go blind.
+
+**Two things worth remembering from doing it:**
+- `CREATE OR REPLACE VIEW` can only *append* columns. Slotting `last_outcome` in beside the other
+  `last_*` columns failed with "cannot change name of view column"; it now sits at the end, which
+  is uglier and cheaper than dropping a view the dashboard reads.
+- `.env.local` cannot be `source`d — `ALERT_EMAIL_FROM=Ops Monitor <alerts@workwright.co>` is a
+  bash syntax error, and sourcing it silently aborts *part way through*, leaving earlier variables
+  set and later ones empty. That failure looks exactly like a wrong credential. Parse dotenv files,
+  do not source them.
+
+**Left for a human, deliberately:** the shared secret was generated locally and never entered a
+transcript, tool call, or commit. There is no Railway CLI on this machine, so setting the variable
+means passing the value to an MCP tool — which is writing a secret into a prompt, and the house
+rules say never. Ryan sets it from the file himself.
+
+**Revisit if:** the Worker's own egress starts getting blocked (the whole thing degrades to today's
+behaviour, but silently — the logs are the only tell), or if `blocked + blocked` pages falsely.
+
 ## 2026-08-11 — "Refused" is a third outcome, and it does not page anyone
 **Why:** Red Rock Bicycle's CDN began answering our checker with `403` at 08:10 MT and mostly kept
 doing so for two hours and twenty minutes, while serving every real visitor normally. The checker
