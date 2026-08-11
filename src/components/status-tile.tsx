@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { ResponseChart, type ChartPoint } from "@/components/response-chart";
+import { isRefusal } from "@/lib/check-outcome";
 import {
   formatMs,
   formatRelative,
@@ -23,17 +24,23 @@ export type TargetStatus = {
   checks_7d: number;
 };
 
-type State = "up" | "down" | "paused" | "unknown";
+type State = "up" | "down" | "blocked" | "paused" | "unknown";
 
 function stateOf(target: TargetStatus): State {
   if (!target.active) return "paused";
   if (target.last_ok === null) return "unknown";
-  return target.last_ok ? "up" : "down";
+  if (target.last_ok) return "up";
+  // Something answered and refused us. That is not an outage, and colouring it
+  // red taught Ryan to distrust the red. See lib/check-outcome.ts.
+  return isRefusal(target.last_status_code) ? "blocked" : "down";
 }
 
 const STATE_COPY: Record<State, { label: string; dot: string; text: string }> = {
   up: { label: "Up", dot: "bg-up", text: "text-up" },
   down: { label: "Down", dot: "bg-down", text: "text-down" },
+  // Copper rather than a fourth colour: the palette carries two accents on
+  // purpose, and "we couldn't tell" belongs with emphasis, not with alarm.
+  blocked: { label: "Blocked", dot: "bg-copper", text: "text-copper" },
   // Not being checked is not the same as being broken, and the board should
   // never imply an inactive target is healthy.
   paused: { label: "Not checked", dot: "bg-muted", text: "text-muted" },
@@ -85,6 +92,18 @@ export function StatusTile({
           {action}
         </div>
       </header>
+
+      {state === "blocked" ? (
+        // Say the whole thing here. The one question this state provokes is
+        // "so is my site working or not?", and making someone go and find out
+        // for themselves is how the board loses their trust.
+        <p className="mt-3 rounded border border-copper/30 bg-copper/10 px-2 py-1 text-xs text-copper">
+          This site refused our checker (HTTP {target.last_status_code}) rather
+          than failing to answer. Something is there and responding, so it is
+          probably serving visitors normally — we just can&rsquo;t confirm it
+          from here. Nobody has been alerted.
+        </p>
+      ) : null}
 
       {target.alerting ? (
         <p className="mt-3 rounded border border-down/30 bg-down/10 px-2 py-1 text-xs text-down">

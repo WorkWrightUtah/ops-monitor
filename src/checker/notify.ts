@@ -2,6 +2,15 @@ import type { CheckResult } from "./http-check";
 
 export type NoticeKind = "down" | "recovered";
 
+/**
+ * Just the parts of a check a notice actually quotes.
+ *
+ * Narrower than CheckResult on purpose: a notice reports what was observed,
+ * and should not start depending on how many attempts it took or how the
+ * outcome was classified. A full CheckResult still satisfies it.
+ */
+export type NoticeResult = Pick<CheckResult, "status_code" | "response_ms" | "ok">;
+
 export type NoticeTarget = {
   id: string;
   name: string;
@@ -22,7 +31,7 @@ export type DeliveryReport = {
  * Exported for tests: this string is what a human reads at 2am, and getting it
  * wrong is a real failure even though nothing throws.
  */
-export function reason(result: CheckResult | null): string {
+export function reason(result: NoticeResult | null): string {
   if (!result) return "the target was switched off while an alert was open";
   if (result.status_code === null) {
     return "no response — DNS failure, refused connection, or timeout";
@@ -39,7 +48,7 @@ export function subjectFor(kind: NoticeKind, target: NoticeTarget): string {
 export function bodyFor(
   kind: NoticeKind,
   target: NoticeTarget,
-  result: CheckResult | null,
+  result: NoticeResult | null,
   checkedAt: string,
 ): string {
   const lines =
@@ -73,7 +82,7 @@ export function bodyFor(
 async function sendEmail(
   kind: NoticeKind,
   target: NoticeTarget,
-  result: CheckResult | null,
+  result: NoticeResult | null,
   checkedAt: string,
 ): Promise<{ status: "accepted" | "failed" | "skipped"; error?: string }> {
   const apiKey = process.env.RESEND_API_KEY;
@@ -128,7 +137,7 @@ async function sendEmail(
 async function postToTeams(
   kind: NoticeKind,
   target: NoticeTarget,
-  result: CheckResult | null,
+  result: NoticeResult | null,
   checkedAt: string,
 ): Promise<{ status: "accepted" | "failed" | "skipped"; error?: string }> {
   const webhook = process.env.N8N_ALERT_WEBHOOK_URL;
@@ -179,7 +188,7 @@ async function postToTeams(
 export async function sendNotice(
   kind: NoticeKind,
   target: NoticeTarget,
-  result: CheckResult | null,
+  result: NoticeResult | null,
   checkedAt: string,
 ): Promise<DeliveryReport> {
   const [email, teams] = await Promise.all([

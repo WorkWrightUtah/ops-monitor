@@ -3,6 +3,7 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { DeleteTargetButton } from "@/components/delete-target-button";
 import { StatusTile, type TargetStatus } from "@/components/status-tile";
 import type { ChartPoint } from "@/components/response-chart";
+import { isRefusal } from "@/lib/check-outcome";
 import { isoHoursAgo } from "@/lib/format";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "./login/actions";
@@ -25,7 +26,7 @@ export default async function Dashboard() {
     supabase.from("target_status").select("*").order("name"),
     supabase
       .from("checks")
-      .select("target_id, checked_at, response_ms, ok")
+      .select("target_id, checked_at, response_ms, ok, status_code")
       .gte("checked_at", since)
       .order("checked_at", { ascending: true }),
   ]);
@@ -41,12 +42,42 @@ export default async function Dashboard() {
       checked_at: row.checked_at,
       response_ms: row.response_ms,
       ok: row.ok,
+      status_code: row.status_code,
     });
     historyByTarget.set(row.target_id, points);
   }
 
   const watched = targets.filter((t) => t.active);
-  const down = watched.filter((t) => t.last_ok === false);
+  // A refused check is not a failed one. Counting blocked targets as "down"
+  // here is the same mistake the alert rules used to make, one screen over.
+  const failing = watched.filter(
+    (t) => t.last_ok === false && !isRefusal(t.last_status_code),
+  );
+  const blocked = watched.filter(
+    (t) => t.last_ok === false && isRefusal(t.last_status_code),
+  );
+
+  const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+  const blockedNote = blocked.length
+    ? ` ${blocked.length} ${plural(blocked.length, "is", "are")} refusing our checker — not an outage.`
+    : "";
+
+  const summary =
+    targets.length === 0
+      ? "Nothing to show."
+      : failing.length > 0
+        ? `${failing.length} of ${watched.length} watched ${plural(
+            failing.length,
+            "site is",
+            "sites are",
+          )} down.${blockedNote}`
+        : blocked.length === watched.length
+          ? `${watched.length} ${plural(watched.length, "site", "sites")} watched. None can be checked right now — see below.`
+          : `${watched.length - blocked.length} of ${watched.length} watched ${plural(
+              watched.length,
+              "site",
+              "sites",
+            )} up. Checked every 5 minutes.${blockedNote}`;
 
   // Mirrors public.is_team_member() to decide whether to show the controls.
   // Display only — the database still decides who may actually write, and the
@@ -65,17 +96,7 @@ export default async function Dashboard() {
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">
             Ops Monitor
           </h1>
-          <p className="mt-1 text-sm text-muted">
-            {targets.length === 0
-              ? "Nothing to show."
-              : down.length > 0
-                ? `${down.length} of ${watched.length} watched ${
-                    watched.length === 1 ? "site is" : "sites are"
-                  } down.`
-                : `${watched.length} ${
-                    watched.length === 1 ? "site" : "sites"
-                  } watched, all up. Checked every 5 minutes.`}
-          </p>
+          <p className="mt-1 text-sm text-muted">{summary}</p>
         </div>
 
         <div className="flex items-center gap-3 text-sm">

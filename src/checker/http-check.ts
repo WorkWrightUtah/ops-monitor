@@ -1,8 +1,16 @@
+// Relative, not "@/lib/...": this module runs under plain tsx on the checker
+// service, not through the Next.js bundler that resolves the alias.
+import { type CheckOutcome, isHealthyStatus, outcomeOf } from "../lib/check-outcome";
+
 /** One HTTP GET against one target, shaped like a row of `checks`. */
 export type CheckResult = {
   status_code: number | null;
   response_ms: number;
   ok: boolean;
+  /** up / down / blocked — see lib/check-outcome.ts. */
+  outcome: CheckOutcome;
+  /** How many requests it took. 2 means the first attempt failed and we retried. */
+  attempts: number;
 };
 
 /**
@@ -11,27 +19,21 @@ export type CheckResult = {
  */
 export const TIMEOUT_MS = 10_000;
 
+/**
+ * How long to wait before a second attempt.
+ *
+ * Long enough to outlast a dropped connection or a single unlucky packet,
+ * short enough that two attempts plus two timeouts still finish inside the
+ * five-minute window with room to spare.
+ */
+export const RETRY_DELAY_MS = 3_000;
+
 const USER_AGENT =
   "WorkWright-OpsMonitor/1.0 (+https://status.workwright.co; ops@workwright.co)";
 
-/**
- * Which HTTP statuses count as healthy.
- *
- * 2xx and 3xx are up. Redirects are followed, so a 3xx here means the final
- * response was itself a redirect — still a server that answered. 4xx and 5xx
- * are down, including the 404 the deliberately-broken seed target returns,
- * which is the whole point of that target.
- *
- * Split out from checkUrl so the rule can be tested without a network call.
- */
-export function isHealthyStatus(status: number): boolean {
-  return status >= 200 && status < 400;
-}
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export async function checkUrl(
-  url: string,
-  timeoutMs: number = TIMEOUT_MS,
-): Promise<CheckResult> {
+async function attempt(url: string, timeoutMs: number): Promise<CheckResult> {
   const started = performance.now();
 
   try {
@@ -44,6 +46,12 @@ export async function checkUrl(
       signal: AbortSignal.timeout(timeoutMs),
       // Identify ourselves. An unlabelled poller hitting a site every five
       // minutes is what a bot filter is built to block.
+      //
+      // Worth knowing: being honest here is also what gets us blocked, and
+      // dressing the checker up as Chrome would probably walk straight past
+      // most bot filters. We don't. A monitor that lies about who it is can't
+      // be allowlisted by the people whose sites it watches, and the contact
+      // details in this string are the whole point.
       headers: { "user-agent": USER_AGENT },
       cache: "no-store",
     });
@@ -57,7 +65,9 @@ export async function checkUrl(
     return {
       status_code: response.status,
       ok: isHealthyStatus(response.status),
+      outcome: outcomeOf(response.status),
       response_ms,
+      attempts: 1,
     };
   } catch {
     // DNS failure, connection refused, TLS error, or our own timeout. There is
@@ -67,7 +77,32 @@ export async function checkUrl(
     return {
       status_code: null,
       ok: false,
+      outcome: "down",
       response_ms: Math.round(performance.now() - started),
+      attempts: 1,
     };
   }
+}
+
+export async function checkUrl(
+  url: string,
+  timeoutMs: number = TIMEOUT_MS,
+  retryDelayMs: number = RETRY_DELAY_MS,
+): Promise<CheckResult> {
+  const first = await attempt(url, timeoutMs);
+
+  // A single failed request is thin evidence. Networks drop connections, load
+  // balancers cycle, and one unlucky moment should not enter the history as a
+  // fact — the threshold protects the alert, but nothing protected the record.
+  //
+  // We retry "down" and not "blocked" on purpose. A site that just refused us
+  // will refuse us again, so a retry buys no information; what it does buy is
+  // double the request rate against a WAF that already dislikes our traffic,
+  // which is how a temporary block becomes a permanent one.
+  if (first.outcome !== "down") return first;
+
+  await sleep(retryDelayMs);
+  const second = await attempt(url, timeoutMs);
+
+  return { ...second, attempts: 2 };
 }

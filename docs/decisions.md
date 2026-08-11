@@ -3,6 +3,68 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-11 — "Refused" is a third outcome, and it does not page anyone
+**Why:** Red Rock Bicycle's CDN began answering our checker with `403` at 08:10 MT and mostly kept
+doing so for two hours and twenty minutes, while serving every real visitor normally. The checker
+had two words for what it saw — up or down — so it called a healthy bike shop down and emailed
+about it. Ryan looked at the site, saw it working, and told us the monitor was crying wolf. He was
+right, and that is the expensive part: a monitor nobody believes costs the same as one they do and
+still gets ignored on the day it is correct.
+
+**The distinction now in the code:** `up` (we asked and got a good response), `down` (nothing
+answered, or what answered was broken), `blocked` (something answered and turned us away).
+`401`/`403`/`429` are `blocked`. It is deliberately a narrow list — every other `4xx` stays `down`,
+because a `404` on a page a customer would visit is a real problem, and the spec's broken-route
+seed target depends on that still alerting.
+
+**Blocked is not a softer "down", it is the absence of information.** A `403` from an edge network
+is near-affirmative evidence the site is serving: a genuinely broken site gives `5xx` or nothing.
+So refusals are skipped when counting runs — they build toward neither an alert nor a recovery, and
+a target holds whatever state it was already in. An open alert on a genuinely-down target that then
+starts blocking us stays open rather than being quietly retracted on no evidence.
+
+**How it was found:** running the checker's exact code path and exact user-agent from a laptop
+returned `200`; so did a fetch from an unrelated datacenter; and the checker itself got a `200` at
+10:30 in the middle of the "outage". The tell was in the data all along — refusals came back in
+46–93 ms against 100–200 ms for real page loads. That is a CDN edge saying no, not an origin
+failing. Nothing about this was visible from the code.
+
+**Also fixed in the same pass, because the same morning exposed them:**
+- **Recovery now needs two consecutive good checks, not one.** The single `200` at 10:30 fired
+  "Recovered", and two refusals ten minutes later fired "DOWN" again — three emails, none true.
+  Recovery deserves the same burden of proof the outage did; asymmetry is what let it flap.
+- **Failed checks are retried once** after 3 seconds before being recorded. The alert threshold
+  protected the alert, but nothing protected the history. Refusals are *not* retried: a site that
+  just refused us will refuse us again, and doubling our request rate against a WAF that already
+  dislikes our traffic is how a temporary block becomes a permanent one.
+- **Uptime excludes refusals from both numerator and denominator** (`target_status` view). The old
+  maths showed ~85% for a site that never missed a request. A wrong number in a client report is a
+  worse failure than a noisy alert, because it survives longer and nobody double-checks it.
+- **`HISTORY_WINDOW` 5 → 12.** Refusals no longer count toward runs, so a blocked stretch can fill
+  the window with rows that say nothing; a wider window keeps enough real checks in view to reach a
+  verdict at all.
+
+**Judgement call, recorded because it is arguable:** dressing the checker up as Chrome would
+probably walk straight past most bot filters. We don't. A monitor that lies about who it is cannot
+be allowlisted by the people whose sites it watches, and the contact details in the user-agent are
+the entire point of the string. Being honest is also what gets us blocked; that trade is accepted
+deliberately, not overlooked.
+
+**Unproven, kept cheap:** checks are now jittered up to 30s inside each 5-minute slot, on the theory
+that requests arriving on a perfect grid from one datacenter IP are a recognisable machine
+signature. That is a hypothesis about *why* nineteen clean hours turned into a block, not a
+demonstrated fix. It costs up to half a minute of detection latency. If it turns out not to help,
+delete it and lose nothing.
+
+**Known limit:** a single checker in a single datacenter cannot tell "the site is refusing
+everyone" from "the site is refusing us". Confirming a failure from a second vantage point before
+alerting would close that gap; it is not built. Until it is, `blocked` is the honest name for what
+we actually know.
+
+**Revisit if:** a target sits Blocked for days (get the checker allowlisted at that site's CDN — the
+user-agent carries contact details for this), or if a real outage is ever missed because it
+presented as a `403`.
+
 ## 2026-08-10 — Route handlers must read the forwarded host, not `request.url`
 **Why:** behind Railway's proxy, `new URL(request.url).origin` inside a route handler resolves to
 the container's own bind address — `https://0.0.0.0:8080` — not the public hostname. Both auth

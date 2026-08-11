@@ -54,6 +54,10 @@ fire a spurious one.
 - A target counts as **up** on any `2xx` or `3xx` response. Redirects are followed, so a site that
   301s to its canonical host is healthy.
 - Checks time out after **10 seconds**. A timeout is a failure with no status code.
+- A failed check is **retried once** after 3 seconds before it's recorded. One dropped connection
+  shouldn't enter the history as a fact.
+- Checks are **jittered** by up to 30 seconds inside each 5-minute slot, so our traffic doesn't
+  arrive on a perfectly machine-like grid. See "Blocked" below.
 - One URL, one row — the database enforces it, so you can't accidentally watch the same site twice
   under two names.
 
@@ -68,9 +72,39 @@ The rules, exactly:
 | A check fails once | **Nothing.** One blip is not an outage. |
 | A second check fails in a row | **One alert** — a Resend email to `claude@workwright.co` *and* an Adaptive Card in the Teams channel. |
 | It keeps failing | **Nothing more.** One outage produces one alert, however long it lasts. |
-| It responds successfully again | **One recovery notice** to the same two channels. |
+| It responds successfully **twice** in a row | **One recovery notice** to the same two channels. |
+| The site **refuses** us (`401`, `403`, `429`) | **Nothing.** See "Blocked" below. |
 | You pause a target that was alerting | **One recovery notice**, closing the alert out. |
 | A target that never alerted recovers or is paused | **Nothing.** There's nothing to take back. |
+
+### "Blocked" — refused is not down
+
+A site can answer and still turn us away. A `403` from a CDN means that CDN is alive and serving;
+it tells us nothing about whether customers can reach the site. A genuinely broken site gives a
+`5xx`, or nothing at all.
+
+So `401`, `403` and `429` are recorded as **Blocked**, not Down:
+
+- **No alert is sent.** Nobody gets paged because a bot filter doesn't like us.
+- The dashboard shows an amber **Blocked** pill and says so in plain words on the tile.
+- Blocked checks are **left out of the uptime percentage** entirely — not counted as downtime, not
+  counted as uptime. A tile reading `100% · 2 checks in 24h` means what it says: what we saw was
+  healthy, and we hardly got to look.
+- They don't count toward an alert **or** toward a recovery. A target that was genuinely down and
+  then starts blocking us keeps its open alert, because we no longer know anything.
+
+**Every other `4xx` still alerts**, including `404` — a missing page is a real problem for whoever
+was trying to visit it.
+
+**What to do when a target sits Blocked for days:** the durable fix is to get the checker
+allowlisted by whoever runs that site's CDN. The user-agent carries contact details for exactly
+this reason:
+
+```
+WorkWright-OpsMonitor/1.0 (+https://status.workwright.co; ops@workwright.co)
+```
+
+Until then the tool is honest about not knowing, which is the point.
 
 **Why you won't get spammed:** a `targets.alerting` flag tracks whether a notice is outstanding.
 It's set only *after* a notice is actually delivered — so if both channels fail, the alert stays

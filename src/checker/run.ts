@@ -5,16 +5,34 @@
 // web process on purpose — a redeploy or idle-sleep of the dashboard must not
 // be able to silently stop the monitoring.
 
+import { outcomeOf } from "../lib/check-outcome";
 import { decide, type AlertAction } from "./alert-rules";
 import { checkUrl, type CheckResult } from "./http-check";
 import { sendNotice } from "./notify";
 import { createAdminClient } from "./supabase";
 
 /**
- * How many recent checks to read when counting consecutive failures. The
- * threshold is 2; a few extra rows cost nothing and let the logs show context.
+ * How many recent checks to read when counting consecutive failures.
+ *
+ * Was 5 when every row counted. Refusals are now skipped when counting runs,
+ * so a blocked stretch can fill the window with rows that say nothing; a wider
+ * window keeps enough real checks in view to still reach a verdict.
  */
-const HISTORY_WINDOW = 5;
+const HISTORY_WINDOW = 12;
+
+/**
+ * Spread each target's check randomly across this many milliseconds.
+ *
+ * Requests that arrive on a perfect five-minute grid, from one datacenter IP,
+ * forever, are a recognisable machine signature — and bot filters score
+ * exactly that. Jitter is a hypothesis about why Red Rock's CDN started
+ * refusing us after nineteen clean hours, not a proven fix; it costs up to
+ * half a minute of detection latency, which is cheap against a five-minute
+ * cadence. If it turns out not to help, delete it and lose nothing.
+ */
+const JITTER_MS = 30_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type Target = {
   id: string;
@@ -76,6 +94,8 @@ async function announce(
 
 /** Check one active target, record it, and act on the result. */
 async function processActive(supabase: Supabase, target: Target) {
+  await sleep(Math.random() * JITTER_MS);
+
   const result = await checkUrl(target.url);
   const checkedAt = new Date().toISOString();
 
@@ -95,16 +115,34 @@ async function processActive(supabase: Supabase, target: Target) {
     return;
   }
 
+  const label =
+    result.outcome === "up"
+      ? "up"
+      : result.outcome === "blocked"
+        ? "BLOCKED"
+        : "DOWN";
+
   log(
-    `  ${target.name}: ${result.ok ? "up" : "DOWN"} ` +
-      `(${result.status_code ?? "no response"}, ${result.response_ms} ms)`,
+    `  ${target.name}: ${label} ` +
+      `(${result.status_code ?? "no response"}, ${result.response_ms} ms` +
+      `${result.attempts > 1 ? `, ${result.attempts} attempts` : ""})`,
   );
+
+  if (result.outcome === "blocked") {
+    log(
+      `    refused, not down — something answered. Nobody is being paged for this.`,
+    );
+  }
 
   // Read back the tail *including* the row just written, so the threshold is
   // counted against what is actually stored rather than what we think we wrote.
+  //
+  // status_code comes back too: the outcome is derived from it rather than
+  // stored, so old rows reclassify themselves under the current rules instead
+  // of freezing yesterday's verdict into the history.
   const { data: recent, error: historyError } = await supabase
     .from("checks")
-    .select("ok")
+    .select("status_code")
     .eq("target_id", target.id)
     .order("checked_at", { ascending: false })
     .limit(HISTORY_WINDOW);
@@ -117,7 +155,7 @@ async function processActive(supabase: Supabase, target: Target) {
   const action = decide({
     active: true,
     alerting: target.alerting,
-    recentOk: (recent ?? []).map((row) => row.ok),
+    recent: (recent ?? []).map((row) => outcomeOf(row.status_code)),
   });
 
   if (action !== "none") {
@@ -133,7 +171,7 @@ async function processDeactivated(supabase: Supabase, target: Target) {
   const action = decide({
     active: false,
     alerting: target.alerting,
-    recentOk: [],
+    recent: [],
   });
 
   if (action !== "none") {

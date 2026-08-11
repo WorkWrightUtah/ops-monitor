@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { bodyFor, reason, subjectFor } from "./notify";
-import { isHealthyStatus } from "./http-check";
 
 // The alert rules decide *whether* to speak; these decide *what gets said*.
 // A wrong message is a silent failure — nothing throws, the send succeeds, and
 // somebody is woken up by a notice that doesn't tell them which site is down
 // or why. Worth pinning.
+//
+// Status classification used to be tested here too; it moved to
+// lib/check-outcome.test.ts along with the rule itself.
 
 const TARGET = {
   id: "t1",
@@ -16,21 +18,6 @@ const TARGET = {
 };
 
 const CHECKED_AT = "2026-08-07T01:15:00.000Z";
-
-test("isHealthyStatus: 2xx and 3xx are up, 4xx and 5xx are down", () => {
-  for (const up of [200, 201, 204, 301, 302, 307, 399]) {
-    assert.equal(isHealthyStatus(up), true, `${up} should be healthy`);
-  }
-  for (const down of [400, 401, 403, 404, 429, 500, 502, 503]) {
-    assert.equal(isHealthyStatus(down), false, `${down} should be unhealthy`);
-  }
-});
-
-test("the broken seed target's 404 counts as down", () => {
-  // This is the target the whole alert acceptance test rides on. If 404 ever
-  // reads as healthy, the test target stops testing anything.
-  assert.equal(isHealthyStatus(404), false);
-});
 
 test("reason: an HTTP status is reported verbatim", () => {
   assert.equal(
