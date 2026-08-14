@@ -3,6 +3,37 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-13 — The Teams channel was dead for a week and every log said it was fine
+**What happened:** Microsoft's weekly digest reported that "Send webhook alerts to General" had
+failed 15 times. It had. The flow's Microsoft Teams connection (owned by benson@workwright.co) lost
+its token on the evening of 2026-08-06, and `Post card in a chat or channel` has returned
+`Unauthorized` on every run since. Exactly one card has ever reached the channel: the build test on
+2026-08-06. Every real alert since — including all four on the 11th — went to email only.
+
+**The fix is one click** on Power Automate's "Reauthenticate" banner. That is not the interesting
+part.
+
+**The interesting part is that nothing on our side noticed for a week**, and not through neglect —
+through design. Every hop in the Teams path answers before it does the work. n8n's webhook replies
+"Workflow got started" and *then* runs, so the checker sees a 200. Power Automate replies `202
+Accepted` with an empty body and *then* runs the flow, so n8n's HTTP node sees a success. Six n8n
+executions are recorded as successful; all six correspond to runs that failed inside Power
+Automate. There is no response anywhere in that chain that could have told us the truth, so this
+was not a bug to find — the information never left Microsoft.
+
+**Worth being blunt about:** `teams=accepted` in the checker logs means "n8n took the request." It
+has never meant a human saw anything. We already made this mistake's twin with Resend and chose the
+honest word "accepted" over "sent" for exactly this reason; the wording held up, and it still
+wasn't enough, because nobody re-reads a log line that says the thing succeeded.
+
+**What we did not do:** rebuild the alert path. Email and Teams are independent channels and the
+independent one worked for the entire week — the redundancy did its job, which is the case *for*
+having two channels rather than an argument that this one is fine. The durable fix (moving the post
+off Power Automate so a failure is at least *visible*) is a real change with a real cost and is
+Ryan's call, not something to slip in while fixing an expired token. Logged here so the next person
+who sees "teams=accepted" alongside a silent channel does not spend an afternoon debugging the
+checker. Runbook: README → "When Teams cards stop arriving but email keeps working."
+
 ## 2026-08-11 — A second vantage point, and the threshold raised to three
 **Why:** both at Ryan's request, after a day of alerts he didn't believe. The threshold change is
 one line and a real trade: three consecutive failures spans ten minutes rather than five, so a

@@ -178,6 +178,43 @@ inactive.
 If you want it faster than the cron, run `npm run check:local` locally — each invocation is one
 cycle.
 
+### When Teams cards stop arriving but email keeps working
+
+This has already happened once, on 2026-08-06, and it went unnoticed for a week. Read this before
+debugging anything on our side, because **the logs will tell you the send succeeded.**
+
+The Teams path has three hops, and only the first two are ours:
+
+```
+checker  ──POST──▶  n8n webhook  ──POST──▶  Power Automate flow  ──▶  Teams channel
+                    (our workflow)          "Send webhook alerts to General"
+```
+
+Both of our hops answer instantly and optimistically. The n8n webhook replies "Workflow got
+started" before the workflow runs, so the checker logs `teams=accepted`. Power Automate replies
+`202 Accepted` with an empty body before the flow runs, so the n8n node logs a success. **A flow
+that fails on every single run still looks green from here.** The failure is visible in exactly
+two places: the flow's own run history, and a weekly digest email Microsoft sends the flow's owner
+("1 of your flow(s) have failed").
+
+Where to look, in order:
+
+1. **Teams itself.** Search the channel for a recent alert. If the last card is old, the flow is
+   the problem, not the checker.
+2. **[The flow's run history](https://make.powerautomate.com/environments/Default-fe3d00dc-277c-4f4a-8088-5578cce1296a/flows/6c0f4681-7b2a-4766-9bcf-062efba462f0/details)**
+   — signed in as **benson@workwright.co**, who owns it. Open a failed run and read the red step.
+3. Only then look at n8n executions and the `checker` logs.
+
+**The failure we've actually seen:** the trigger step succeeds, and `Post card in a chat or
+channel` fails with **`Unauthorized`**. That is not our payload — it's the flow's Microsoft Teams
+connection losing its token, usually after a password change or a tenant policy update. Power
+Automate shows an **"Action required"** banner offering **Reauthenticate**; one click on that
+fixes it. Nothing needs to be redeployed and no code needs to change.
+
+**Do not panic about missed outages.** Email and Teams are independent — email goes out through
+Resend and does not touch any of this. Through the entire week of Teams failures every alert still
+landed in `claude@workwright.co`. That redundancy is the whole reason there are two channels.
+
 ---
 
 ## Runbook: how to redeploy
