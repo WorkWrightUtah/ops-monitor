@@ -3,6 +3,44 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-13 (later) — Tried to move Teams off Power Automate, and reverted
+**Attempted:** replace the Power Automate hop with n8n's Microsoft Teams node, so a failed post
+would show as a failed n8n execution instead of a green one. Built it, published it, tested it,
+and backed it out the same hour. Teams alerts run through Power Automate exactly as before.
+
+**Why it failed — n8n fixes the OAuth scopes and the ones it asks for cannot post.** Graph was
+blunt about it: `Missing scope permissions. API requires one of 'ChannelMessage.Send,
+Group.ReadWrite.All'. Scopes on the request 'ChannelMessage.Read.All, Chat.ReadWrite,
+Group.Read.All, openid, User.Read.All, profile, email'`. n8n Cloud's managed OAuth connects
+happily and hands back a token that can read Teams and not write to it. The scope field is hidden
+on both `microsoftTeamsOAuth2Api` and `microsoftOAuth2Api`, so there is no way to ask for
+`ChannelMessage.Send` through either credential.
+
+**This is the second time.** The workflow's own version history from 2026-08-06 says "The Microsoft
+Teams OAuth credential never completed consent" — someone hit this wall, gave up, and fell back to
+the Power Automate webhook. The abandoned `workwrightopsteams` app registration in Entra is the
+wreckage of that attempt. Recording it here so there isn't a third.
+
+**The way through, if anyone wants it later:** a generic n8n **OAuth2 API** credential, which is
+the only one with an editable scope field, set to `openid offline_access ChannelMessage.Send`,
+driving an HTTP Request node against
+`POST https://graph.microsoft.com/v1.0/teams/{team}/channels/{channel}/messages`. That needs the
+`workwrightopsteams` client secret, and a second redirect URI on the app —
+`https://oauth.n8n.cloud/oauth2/callback`, which differs from the one the Teams credential uses.
+Worth noting it is also the *least*-privilege option: `ChannelMessage.Send` alone, versus the
+tenant-wide `Group.ReadWrite.All` the Teams node would have required.
+
+**Not doing it yet, deliberately.** The n8n workspace is on a trial with six days left, and every
+Teams alert routes through n8n. Spending an Entra app registration and a broad consent to harden a
+dependency that may expire next week is the wrong order of operations. If the trial is not
+converted, the right answer is to post to Teams from the checker directly and delete this hop.
+
+**What did survive the attempt:** proof that the checker's own reporting can be made honest. With
+the webhook set to respond after the workflow rather than on receipt, the failing Teams post came
+back as `n8n 500` and the checker logged `teams=failed` — the first time in this project's life
+that log line told the truth about Teams. That one-line change is worth re-applying the moment the
+post itself is done by something that fails loudly.
+
 ## 2026-08-13 — The Teams channel was dead for a week and every log said it was fine
 **What happened:** Microsoft's weekly digest reported that "Send webhook alerts to General" had
 failed 15 times. It had. The flow's Microsoft Teams connection (owned by benson@workwright.co) lost
