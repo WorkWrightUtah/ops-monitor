@@ -168,15 +168,38 @@ was judged more important than guaranteeing both channels every time.
 
 ### Testing the alert path
 
-There's a seed target called **Broken route (alert test)** that points at a 404 route and sits
-inactive.
+Add a temporary target pointed at a hostname that does not resolve, let it fail three times, then
+switch it off. That exercises the whole path — checker, thresholds, email, and Teams — for real.
 
-1. Set its `active` to `true`.
-2. Wait two check cycles (≤ 10 minutes). You should get exactly one email and one Teams card.
-3. Set `active` back to `false`. You should get exactly one recovery notice, and nothing after.
+```sql
+-- 1. Create it. A nonexistent host gives a clean "no response", which is
+--    unambiguously down. Do NOT use a 404 on status.workwright.co: the auth
+--    middleware redirects unknown routes to /login and the checker sees 200.
+insert into public.targets (name, url, active, alerting)
+values ('Alert path test (temporary)', 'https://this-host-does-not-exist.workwright.co', true, false);
 
-If you want it faster than the cron, run `npm run check:local` locally — each invocation is one
-cycle.
+-- 2. Run three cycles (see below). The third sends the DOWN notice.
+
+-- 3. Switch it off. The next cycle closes the alert out with a recovery notice.
+update public.targets set active = false where name = 'Alert path test (temporary)';
+
+-- 4. Run one more cycle, then delete it. Check alerting = false first — deleting
+--    a target mid-alert leaves a notice that never gets closed.
+delete from public.targets where name = 'Alert path test (temporary)';
+```
+
+Each `npm run check:local` is one cycle, so the whole test takes about two minutes instead of the
+twenty the cron would need. Expect exactly one email plus one Teams card for the outage, and one of
+each for the recovery.
+
+Two things to know before you read the output:
+
+- **`teams=accepted` is not proof.** It means n8n took the request. Confirm in the channel, or in
+  the flow's run history — see the section above.
+- **The second vantage is not exercised locally.** `VANTAGE_URL` and `VANTAGE_TOKEN` live in
+  Railway, not `.env.local`, so a local run logs `second vantage saw unavailable (not configured)`
+  and falls back to its own verdict. That is correct behaviour, not a fault, but it means local
+  runs do not test the Worker.
 
 ### When Teams cards stop arriving but email keeps working
 
