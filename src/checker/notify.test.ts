@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { FAILURE_THRESHOLD } from "./alert-rules";
-import { bodyFor, reason, subjectFor } from "./notify";
+import { bodyFor, channelFailureNotice, reason, subjectFor } from "./notify";
 
 // The alert rules decide *whether* to speak; these decide *what gets said*.
 // A wrong message is a silent failure — nothing throws, the send succeeds, and
@@ -108,4 +108,29 @@ test("every message names the target, whatever the shape", () => {
     assert.match(body, /WorkWright marketing site/, "must name the target");
     assert.match(body, /https:\/\/workwright\.co/, "must include the URL");
   }
+});
+
+test("the Teams-failure warning says which target and carries the real error", () => {
+  // This email exists because the Teams channel failed quietly for a week in
+  // August 2026. If it arrives without the underlying error, whoever reads it
+  // is back to guessing, which is the thing it was written to stop.
+  const notice = channelFailureNotice(
+    "Red Rock Bicycle",
+    "Resend 422: recipient is on the suppression list",
+  );
+
+  assert.match(notice, /Red Rock Bicycle/);
+  assert.match(notice, /suppression list/, "the cause must survive into the email");
+  assert.match(notice, /email, but posting it to the/i, "must say the alert itself got out");
+  assert.doesNotMatch(notice, /undefined|null|NaN/);
+});
+
+test("the warning does not imply the outage alert was lost", () => {
+  // The distinction matters at 2am: one channel is broken, the alert arrived.
+  // Wording that reads as "your alert failed" would send someone looking for
+  // an outage notice that is sitting in their inbox.
+  const notice = channelFailureNotice("WorkWright marketing site", "n8n 500");
+
+  assert.match(notice, /went out by email/i);
+  assert.match(notice, /reaching this mailbox/i);
 });

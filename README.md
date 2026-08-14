@@ -70,9 +70,10 @@ The rules, exactly:
 | Situation | What happens |
 |---|---|
 | A check fails once or twice | **Nothing.** One blip is not an outage. |
-| A **third** check fails in a row | **One alert** — a Resend email to `claude@workwright.co` *and* an Adaptive Card in the Teams channel. |
+| A **third** check fails in a row | **One alert** — a Resend email to `claude@workwright.co` *and* a post in the Teams channel. |
 | It keeps failing | **Nothing more.** One outage produces one alert, however long it lasts. |
 | It responds successfully **twice** in a row | **One recovery notice** to the same two channels. |
+| The Teams post fails but the email got out | **One extra email** naming the error. See "How the Teams post gets there". |
 | The site **refuses** us (`401`, `403`, `429`) | **Nothing.** See "Blocked" below. |
 | You pause a target that was alerting | **One recovery notice**, closing the alert out. |
 | A target that never alerted recovers or is paused | **Nothing.** There's nothing to take back. |
@@ -194,49 +195,60 @@ each for the recovery.
 
 Two things to know before you read the output:
 
-- **`teams=accepted` is not proof.** It means n8n took the request. Confirm in the channel, or in
-  the flow's run history — see the section above.
+- **`teams=accepted` is not proof.** It means Resend queued the message. Confirm in the channel.
 - **The second vantage is not exercised locally.** `VANTAGE_URL` and `VANTAGE_TOKEN` live in
   Railway, not `.env.local`, so a local run logs `second vantage saw unavailable (not configured)`
   and falls back to its own verdict. That is correct behaviour, not a fault, but it means local
   runs do not test the Worker.
 
-### When Teams cards stop arriving but email keeps working
+### How the Teams post gets there
 
-This has already happened once, on 2026-08-06, and it went unnoticed for a week. Read this before
-debugging anything on our side, because **the logs will tell you the send succeeded.**
+**The Teams channel is an email address.** The checker sends the notice to it through Resend, the
+same way it sends yours. There is no OAuth token, no n8n, and no Power Automate flow in that path —
+which is the entire point, because all three of those expire or break and the previous arrangement
+did exactly that.
 
-The Teams path has three hops, and only the first two are ours:
+The address lives in `TEAMS_CHANNEL_EMAIL` (Railway, `checker` service). To find it again: in
+Teams, ⋯ next to the channel → **Get email address**. If Teams says "We're still setting up your
+team", try again — it provisions the address on demand and often fails the first time.
 
-```
-checker  ──POST──▶  n8n webhook  ──POST──▶  Power Automate flow  ──▶  Teams channel
-                    (our workflow)          "Send webhook alerts to General"
-```
+**Two sender domains are allowed, and both are load-bearing.** Under **Advanced settings** on that
+same dialog, the channel accepts mail only from `workwright.co` **and** `send.workwright.co`.
+Teams matches the *envelope* sender, not the `From:` header, and Resend's return path lives on the
+`send.` subdomain — so allowing only the bare domain silently drops every message. Resend still
+reports `delivered`, because Microsoft accepts the mail and then discards it. That failure looks
+identical to success from our side; it cost an hour to find.
 
-Both of our hops answer instantly and optimistically. The n8n webhook replies "Workflow got
-started" before the workflow runs, so the checker logs `teams=accepted`. Power Automate replies
-`202 Accepted` with an empty body before the flow runs, so the n8n node logs a success. **A flow
-that fails on every single run still looks green from here.** The failure is visible in exactly
-two places: the flow's own run history, and a weekly digest email Microsoft sends the flow's owner
-("1 of your flow(s) have failed").
+**If Teams posts stop arriving:**
 
-Where to look, in order:
+1. Check the channel first. If the last post is old, the problem is downstream of Resend.
+2. Look for a **"Teams delivery failed"** email — the checker sends one whenever the Teams leg
+   fails and the mailbox leg worked. It names the underlying error.
+3. Check Resend's dashboard for the send: `delivered` plus nothing in the channel means Teams
+   accepted and dropped it, which almost always means the sender-domain restriction above.
+4. Check the suppression list. A hard bounce auto-suppresses the address, and Resend will then
+   refuse later sends to it.
 
-1. **Teams itself.** Search the channel for a recent alert. If the last card is old, the flow is
-   the problem, not the checker.
-2. **[The flow's run history](https://make.powerautomate.com/environments/Default-fe3d00dc-277c-4f4a-8088-5578cce1296a/flows/6c0f4681-7b2a-4766-9bcf-062efba462f0/details)**
-   — signed in as **benson@workwright.co**, who owns it. Open a failed run and read the red step.
-3. Only then look at n8n executions and the `checker` logs.
+**What still isn't detected:** Teams accepting the mail and silently discarding it. Resend reports
+success, nothing arrives, and nothing warns you. That is the one hole left in this path — it is
+why step 3 exists.
 
-**The failure we've actually seen:** the trigger step succeeds, and `Post card in a chat or
-channel` fails with **`Unauthorized`**. That is not our payload — it's the flow's Microsoft Teams
-connection losing its token, usually after a password change or a tenant policy update. Power
-Automate shows an **"Action required"** banner offering **Reauthenticate**; one click on that
-fixes it. Nothing needs to be redeployed and no code needs to change.
+### Legacy: the Power Automate route
 
-**Do not panic about missed outages.** Email and Teams are independent — email goes out through
-Resend and does not touch any of this. Through the entire week of Teams failures every alert still
-landed in `claude@workwright.co`. That redundancy is the whole reason there are two channels.
+Unsetting `TEAMS_CHANNEL_EMAIL` falls the checker back to `N8N_ALERT_WEBHOOK_URL`, which posts an
+Adaptive Card via n8n → a Power Automate flow → Teams. That path still works and is kept only as a
+rollback. **Do not build on it.** Its Microsoft connection lost its token on 2026-08-06 and every
+alert failed for a week while both hops reported success — see `docs/decisions.md`. If you ever
+need it: the flow is "Send webhook alerts to General", owned by benson@workwright.co, and its run
+history is the only place its failures are visible.
+
+Its old symptom, for recognition: the flow's trigger step succeeds and `Post card in a chat or
+channel` fails with **`Unauthorized`**. Power Automate shows an **"Action required"** banner
+offering **Reauthenticate**, and one click fixes it — until the next time the token dies.
+
+**Do not panic about missed outages.** Email and Teams are independent. Through the entire week
+Teams was dead, every alert still landed in `claude@workwright.co`. That redundancy is the whole
+reason there are two channels, and email remains the one that has never failed.
 
 ---
 

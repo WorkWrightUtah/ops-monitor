@@ -3,6 +3,37 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-08-14 — The Teams channel is now an email address
+**What changed:** the checker posts to Teams by emailing the channel's own address through Resend.
+No OAuth, no n8n, no Power Automate. `TEAMS_CHANNEL_EMAIL` on the Railway `checker` service; unset
+it and the old n8n webhook path takes over again, which is the rollback.
+
+**Why, in one line:** Ryan asked what makes this permanent, and the honest answer is that nothing
+authenticating *as a person* ever is. Delegated tokens expire on password changes, policy updates,
+and 90 days of nothing. An email address has no token to expire. The failure we spent this week on
+cannot happen to this path, because the thing that broke does not exist in it.
+
+**What it costs:** the alerts render as plain email in the channel rather than a coloured Adaptive
+Card. Worth it. The card looked better and arrived nowhere for seven days.
+
+**The trap, which cost an hour and would cost the next person the same.** Teams lets you restrict
+which domains may post to a channel address. Set it to `workwright.co` — the domain in our `From:`
+header — and every message is silently discarded, because **Teams matches the envelope sender, not
+the From header**, and Resend's return path is on `send.workwright.co` (its SPF records live on the
+`send` subdomain). Resend reports `delivered` throughout, because Microsoft accepts the mail and
+then drops it. Both domains are now allowed. The first test vanished; the second, after adding
+`send.workwright.co`, landed. That is the only reason we know.
+
+**A failure here now sends mail.** If the Teams leg fails while the mailbox leg succeeds, the
+checker sends a second, separate email naming the underlying error. That answers the actual
+request — "make sure it sends me an email if it breaks" — for every failure Resend reports.
+
+**What it still does not catch, stated plainly:** Teams accepting the mail and discarding it, as in
+the trap above. Resend says delivered, nothing arrives, nothing warns. Detecting that needs
+something reading the channel, which is a bigger machine than this problem deserves today. It is in
+the README so the next person checks the channel before believing a log line — the same lesson as
+2026-08-13, learned again from the other end.
+
 ## 2026-08-13 (later) — Tried to move Teams off Power Automate, and reverted
 **Attempted:** replace the Power Automate hop with n8n's Microsoft Teams node, so a failed post
 would show as a failed n8n execution instead of a green one. Built it, published it, tested it,

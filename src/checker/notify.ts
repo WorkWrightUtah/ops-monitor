@@ -80,18 +80,19 @@ export function bodyFor(
   return lines.join("\n");
 }
 
-async function sendEmail(
-  kind: NoticeKind,
-  target: NoticeTarget,
-  result: NoticeResult | null,
-  checkedAt: string,
-): Promise<{ status: "accepted" | "failed" | "skipped"; error?: string }> {
+type SendStatus = "accepted" | "failed" | "skipped";
+type SendResult = { status: SendStatus; error?: string };
+
+/**
+ * One Resend send. Both channels go through here now — the mailbox and the
+ * Teams channel — because the Teams channel is just an email address.
+ */
+async function resendSend(to: string, subject: string, text: string): Promise<SendResult> {
   const apiKey = process.env.RESEND_API_KEY;
-  const to = process.env.ALERT_EMAIL_TO;
   const from = process.env.ALERT_EMAIL_FROM;
 
-  if (!apiKey || !to || !from) {
-    return { status: "skipped", error: "RESEND_API_KEY / ALERT_EMAIL_* not set" };
+  if (!apiKey || !from) {
+    return { status: "skipped", error: "RESEND_API_KEY / ALERT_EMAIL_FROM not set" };
   }
 
   try {
@@ -101,12 +102,7 @@ async function sendEmail(
         authorization: `Bearer ${apiKey}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({
-        from,
-        to: [to],
-        subject: subjectFor(kind, target),
-        text: bodyFor(kind, target, result, checkedAt),
-      }),
+      body: JSON.stringify({ from, to: [to], subject, text }),
       signal: AbortSignal.timeout(15_000),
     });
 
@@ -135,14 +131,59 @@ async function sendEmail(
   }
 }
 
+async function sendEmail(
+  kind: NoticeKind,
+  target: NoticeTarget,
+  result: NoticeResult | null,
+  checkedAt: string,
+): Promise<SendResult> {
+  const to = process.env.ALERT_EMAIL_TO;
+  if (!to) return { status: "skipped", error: "ALERT_EMAIL_TO not set" };
+
+  return resendSend(
+    to,
+    subjectFor(kind, target),
+    bodyFor(kind, target, result, checkedAt),
+  );
+}
+
+/**
+ * Post the notice into the Teams channel.
+ *
+ * Preferred route is the channel's own email address, because it has no token
+ * to expire. The alternative — a webhook into n8n, into a Power Automate flow,
+ * into Teams — died silently on 2026-08-06 when the flow's Microsoft
+ * connection lost its token, and stayed dead for a week while every hop in the
+ * chain reported success. Delegated OAuth always expires eventually; an email
+ * address does not.
+ *
+ * The address is restricted in Teams to senders from `workwright.co` and
+ * `send.workwright.co`. Both are needed: Teams matches the *envelope* sender,
+ * and Resend's return path is on the `send.` subdomain. Allowing only the bare
+ * domain looks right and drops every message on the floor — Resend reports
+ * "delivered" because Microsoft accepted the mail before discarding it.
+ */
 async function postToTeams(
   kind: NoticeKind,
   target: NoticeTarget,
   result: NoticeResult | null,
   checkedAt: string,
-): Promise<{ status: "accepted" | "failed" | "skipped"; error?: string }> {
+): Promise<SendResult> {
+  const channelEmail = process.env.TEAMS_CHANNEL_EMAIL;
+  if (channelEmail) {
+    return resendSend(
+      channelEmail,
+      subjectFor(kind, target),
+      bodyFor(kind, target, result, checkedAt),
+    );
+  }
+
+  // Legacy route, kept so unsetting one variable rolls back to the path that
+  // was live before 2026-08-14. Do not add features to it.
   const webhook = process.env.N8N_ALERT_WEBHOOK_URL;
-  if (!webhook) return { status: "skipped", error: "N8N_ALERT_WEBHOOK_URL not set" };
+  if (!webhook) {
+    return { status: "skipped", error: "TEAMS_CHANNEL_EMAIL / N8N_ALERT_WEBHOOK_URL not set" };
+  }
 
   try {
     const response = await fetch(webhook, {
@@ -178,6 +219,25 @@ async function postToTeams(
 }
 
 /**
+ * The email you get when the Teams leg breaks.
+ *
+ * Exported for tests, and for the same reason `reason()` is: this is read by a
+ * human who is trying to work out whether to trust the channel, so the wording
+ * is part of the behaviour.
+ */
+export function channelFailureNotice(targetName: string, error: string): string {
+  return [
+    "The alert for " + targetName + " went out by email, but posting it to the",
+    "Teams channel failed. Alerts are reaching this mailbox and nothing else.",
+    "",
+    `Error:    ${error}`,
+    "",
+    "This is the failure that went unnoticed for a week in August 2026, so it",
+    "now gets its own email. Runbook: README, \"When Teams cards stop arriving\".",
+  ].join("\n");
+}
+
+/**
  * Send one notice to both channels.
  *
  * `delivered` is true when at least one channel succeeded. The caller uses it
@@ -200,6 +260,22 @@ export async function sendNotice(
   const errors = [email.error, teams.error].filter(
     (e): e is string => typeof e === "string",
   );
+
+  // Tell somebody, in the channel that still works, that the other one didn't.
+  //
+  // Only when Teams *failed* — "skipped" means nobody configured it, which is
+  // not a fault and must not generate mail. Best effort on purpose: if this
+  // send fails too the alert itself already went out, and turning a warning
+  // into a hard error would be a poor trade.
+  const to = process.env.ALERT_EMAIL_TO;
+  if (teams.status === "failed" && email.status === "accepted" && to) {
+    const warning = await resendSend(
+      to,
+      `Teams delivery failed: ${target.name}`,
+      channelFailureNotice(target.name, teams.error ?? "no detail"),
+    );
+    if (warning.error) errors.push(`could not send the Teams-failure warning: ${warning.error}`);
+  }
 
   return {
     email: email.status,
