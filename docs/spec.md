@@ -1,5 +1,12 @@
 # WorkWright Shop Monitor — Spec
 
+> **Superseded in part, 2026-09-09.** The dashboard, its login and
+> `status.workwright.co` were deleted, and client-site monitoring moved into the
+> WorkWright Portal. What survives is a headless cron watching the two Portal
+> hostnames and the marketing site — see the README. Everything below describing
+> tiles, sign-in or adding targets through a form is history, kept because the
+> alerting rules and their reasoning are still exactly what runs.
+
 > **Repo:** `workwrightutah/ops-monitor` · **Domain:** `status.workwright.co`
 > Translation of `SOW_Benson.pdf` into the repository's single source of truth. Kept true to what
 > shipped — where the build diverged from the original plan, this file records what was actually

@@ -67,8 +67,7 @@ export async function askSecondVantage(
       {
         headers: { authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(TIMEOUT_MS),
-        cache: "no-store",
-      },
+        },
     );
 
     if (!response.ok) {

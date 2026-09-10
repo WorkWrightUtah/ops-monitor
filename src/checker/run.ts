@@ -11,6 +11,7 @@ import { checkUrl, type CheckResult } from "./http-check";
 import { sendNotice } from "./notify";
 import { askSecondVantage } from "./second-opinion";
 import { createAdminClient } from "./supabase";
+import { normalizeUrl } from "../lib/target-url";
 
 /**
  * How many recent checks to read when counting consecutive failures.
@@ -95,9 +96,27 @@ async function announce(
 
 /** Check one active target, record it, and act on the result. */
 async function processActive(supabase: Supabase, target: Target) {
+  /*
+    Validate the URL before fetching it.
+
+    The dashboard's add-target form used to do this, and the form is gone —
+    targets are now written straight into the table by hand. The database only
+    insists on an http(s) prefix, which `https://user:pass@evil.example` satisfies
+    perfectly well while sending our checker somewhere nobody intended, with
+    credentials attached. normalizeUrl refuses that shape.
+
+    Skipping rather than throwing: one malformed row must not stop the other
+    targets being checked, and the log names it so it can be fixed.
+  */
+  const checked = normalizeUrl(target.url);
+  if ("error" in checked) {
+    log(`  ! ${target.name}: refusing to check this url — ${checked.error}`);
+    return;
+  }
+
   await sleep(Math.random() * JITTER_MS);
 
-  const result = await checkUrl(target.url);
+  const result = await checkUrl(checked.value);
 
   // Only bother a second network when our own answer is bad news. A healthy
   // response needs no corroboration, and this keeps the Worker's traffic

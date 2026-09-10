@@ -57,7 +57,13 @@ async function attempt(url: string, timeoutMs: number): Promise<CheckResult> {
       // be allowlisted by the people whose sites it watches, and the contact
       // details in this string are the whole point.
       headers: { "user-agent": USER_AGENT },
-      cache: "no-store",
+      // There was a `cache: "no-store"` here until 2026-09-09. It never did
+      // anything: Node's fetch has no HTTP cache to disable, and the option is
+      // silently ignored. It typechecked only because the old tsconfig pulled in
+      // DOM types for a service that has never run in a browser. Removing the
+      // DOM lib surfaced it. Nothing is added in its place — sending new
+      // cache-control headers would change how CDNs treat our requests, and this
+      // checker's history with one CDN is the reason half this file exists.
     });
 
     const response_ms = Math.round(performance.now() - started);

@@ -558,3 +558,54 @@ n8n automation allowed) with WorkWright as its own client, so email sends from `
 rather than a client domain. Recorded here because "flag" appears in the README and drives the
 tenancy and email rules.
 **Revisit if:** the shop starts selling this as per-client status monitoring — that's flag A.
+
+## 2026-09-09 — The dashboard, the login and the domain are deleted
+
+Ryan's objection to this app was never the checking. It was the login: signup was
+open to anyone at a public URL, left over from when this was a demo. His words —
+*"since it was a demo, anyone can request an account."*
+
+**The data was never reachable.** Every table is gated on `is_team_member()`,
+which requires the signed-in email's domain to be `workwright.co`, and there are
+no insert, update or delete policies for anyone at all — the checker writes with
+the service_role key, which bypasses RLS. A stranger who signed up got an account
+that could read nothing. Three accounts existed, all `@workwright.co`, all
+confirmed.
+
+So the exposure was narrower than it felt: open registration, not open data.
+
+**We deleted the login rather than hardening it.** Hardening was on the table and
+was the right design if a dashboard was wanted: magic-link sign-in, which proves
+domain membership as a side effect, plus a signup restriction and removing the
+add-target form. It was rejected because it would have bought a second place to
+look, which is the thing the whole day's work existed to remove. Deleting the
+dashboard removes the problem instead of guarding it.
+
+Gone: `src/app`, `src/components`, the proxy, the Next-specific Supabase clients,
+`status.workwright.co`, and Next, React and Tailwind from `package.json`.
+
+**Two things fell out of the cleanup.**
+
+`npm ci` works again. The lockfile had drifted out of sync with `package.json` and
+had been refusing to install since before this change; there is no CI here, so
+nothing ever reported it. Regenerating it against the much smaller dependency list
+fixed it as a side effect.
+
+`cache: "no-store"` was removed from both fetch calls because **it never did
+anything**. Node's fetch has no HTTP cache to disable and ignores the option. It
+typechecked only because the old `tsconfig.json` pulled in DOM types for a service
+that has never run in a browser; dropping the DOM lib surfaced it immediately.
+Nothing was added in its place — sending new cache-control headers would change
+how CDNs treat our requests, and this checker's history with one CDN is why half
+of `http-check.ts` exists.
+
+**URL validation moved into the checker.** The add-target form used to reject
+`https://user:pass@evil.example`, a shape the database's `targets_url_is_http`
+constraint happily accepts. With the form gone and targets written by hand, that
+check would have been lost, so `normalizeUrl` now runs against each target before
+it is fetched. A malformed row is skipped and named in the log rather than
+throwing, so one bad row cannot stop the others being checked.
+
+**Alerts go to `monitor@workwright.co`**, an alias rather than a person.
+Previously `claude@workwright.co` plus a Teams channel, which was fine for a demo
+and not fine for what this now is: the only alarm outside the Portal.
