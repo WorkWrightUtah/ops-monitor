@@ -94,11 +94,28 @@ export const MAX_BLOCKED_GAP = 3;
  * acting on.
  */
 function informative(recent: CheckOutcome[]): CheckOutcome[] {
-  const known: CheckOutcome[] = [];
+  return informativeIndices(recent).map((i) => recent[i]);
+}
+
+/**
+ * The same walk, returning WHERE the informative outcomes were rather than what
+ * they were.
+ *
+ * Added 2026-09-09 so the incident report can say when an outage actually began.
+ * The run length and the run's oldest check have to be derived from one walk: if
+ * they came from two, a blocked stretch could be skipped by one and stop the
+ * other, and the incident's start time would then describe a different run from
+ * the one that triggered the alert.
+ *
+ * `informative` is now defined in terms of this, so agreement is structural
+ * rather than something a test has to keep checking.
+ */
+export function informativeIndices(recent: CheckOutcome[]): number[] {
+  const known: number[] = [];
   let gap = 0;
 
-  for (const outcome of recent) {
-    if (outcome === "blocked") {
+  for (let i = 0; i < recent.length; i += 1) {
+    if (recent[i] === "blocked") {
       gap += 1;
       // Everything older than this blind spot is out of reach, not merely
       // skipped. Stop rather than continue.
@@ -106,7 +123,7 @@ function informative(recent: CheckOutcome[]): CheckOutcome[] {
       continue;
     }
     gap = 0;
-    known.push(outcome);
+    known.push(i);
   }
 
   return known;
@@ -157,4 +174,42 @@ export function decide({ active, alerting, recent }: AlertInput): AlertAction {
   }
 
   return "none";
+}
+
+/**
+ * When the current run of `want` began — the timestamp of its OLDEST check.
+ *
+ * Added 2026-09-09 for the incident report the portal ingests. The portal
+ * records an outage's start and end, and shows the duration to the client whose
+ * site was down, alongside the support hours their plan includes.
+ *
+ * WHY THIS IS NOT SIMPLY "NOW". By the time `decide` returns "alert", three
+ * checks have failed — about ten minutes on a five-minute cadence. By the time
+ * it returns "recover", two have succeeded. Reporting the moment of the decision
+ * would shorten every outage by roughly a quarter of an hour in total, and
+ * always in WorkWright's favour, which is the wrong direction for a number a
+ * client is shown.
+ *
+ * It walks `informativeIndices`, the same walk the thresholds are counted over,
+ * so the start of the run and the length of the run always describe the same
+ * run. A refusal in the middle of an outage does not end it and does not become
+ * its start; a blind spot longer than MAX_BLOCKED_GAP stops the walk, and the
+ * oldest reachable check is then the honest answer — we cannot see past it.
+ *
+ * Returns null when the newest informative check is not `want`, which means the
+ * caller asked about a run that is not currently happening.
+ */
+export function stateBeganAt(
+  recent: { outcome: CheckOutcome; checkedAt: string }[],
+  want: Exclude<CheckOutcome, "blocked">,
+): string | null {
+  const indices = informativeIndices(recent.map((r) => r.outcome));
+
+  let oldest: string | null = null;
+  for (const i of indices) {
+    if (recent[i].outcome !== want) break;
+    oldest = recent[i].checkedAt;
+  }
+
+  return oldest;
 }

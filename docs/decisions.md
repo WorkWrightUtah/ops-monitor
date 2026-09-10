@@ -558,3 +558,65 @@ n8n automation allowed) with WorkWright as its own client, so email sends from `
 rather than a client domain. Recorded here because "flag" appears in the README and drives the
 tenancy and email rules.
 **Revisit if:** the shop starts selling this as per-client status monitoring — that's flag A.
+
+## 2026-09-09 — Reporting state changes to the WorkWright Portal
+
+The portal keeps `monitors` and `incidents` for hosted client projects, and its
+§8b asks that downtime be traceable to the support work it generated and the
+hours that work consumed. It cannot derive any of that from here: our `targets`
+and `checks` live in a different Supabase project, and the portal deliberately
+holds no credentials for it. So the checker tells it, with a POST at the two
+moments it already recognises — `alert` and `recover`.
+
+**It reports when the run began, not when we decided.** This is the whole reason
+the change is more than four lines. `FAILURE_THRESHOLD` is 3 and
+`RECOVERY_THRESHOLD` is 2, both raised on 2026-08-11 to buy back trust in the
+alerts after a day of ones Ryan did not believe. The cost of that decision was
+stated at the time: a real outage is reported five minutes later than it used to
+be. On a five-minute cadence the arithmetic is that we learn of an outage about
+ten minutes after it starts, and of a recovery about five minutes after it ends.
+
+If the portal recorded the moment we told it, every outage it shows would be
+about a quarter of an hour shorter than it was — consistently in WorkWright's
+favour, on a number shown to the client whose site was down and set against the
+support hours their plan includes. So `stateBeganAt` walks back to the oldest
+check in the current run and that timestamp is what is sent.
+
+**`stateBeganAt` shares one walk with the thresholds.** `informative` is now
+defined in terms of a new `informativeIndices`, and both the run length and the
+run's oldest check come from it. Two separate walks could disagree about a
+blocked stretch — one skipping it, the other stopping at it — and the incident's
+start time would then describe a different run from the one that triggered the
+alert. Structural agreement beats a test that has to keep noticing.
+
+**A refusal cannot be the moment a site went down.** Same reasoning as everywhere
+else here: `blocked` is the absence of information. It neither ends an outage nor
+becomes its start, and a blind spot longer than `MAX_BLOCKED_GAP` stops the walk,
+so the reported start is never older than the oldest check we can actually see.
+
+**The report can never break an alert.** `reportIncident` catches everything,
+never throws, has a five-second timeout, and its result is not checked. It runs
+last, after the notice is delivered and the `alerting` flag is committed. The
+alert email and the Teams notice are what this tool exists for; the incident
+record is bookkeeping for a different app, and a portal that is mid-redeploy must
+not turn into a missed page. Verified before shipping against the live portal
+with a deliberately wrong secret and against an unreachable host: both log a line
+and return normally.
+
+**A target switched off while down reports nothing.** We close our own alert
+because we have stopped watching, not because the site came back, and we do not
+know whether it did. Sending "recovered now" would write a recovery time nobody
+observed into a duration the client sees. The portal's incident stays open, which
+is the true statement: it was down when we stopped looking.
+
+**Inert without configuration.** No `PORTAL_INCIDENT_URL` or
+`PORTAL_INCIDENT_SECRET` means the checker reports nothing and says nothing about
+it. That is the normal state for anyone running the checker locally, and warning
+every five minutes would train everyone to ignore the log.
+
+### Noticed while here, not fixed
+
+`package-lock.json` is out of sync with `package.json` — `npm ci` refuses with
+`Missing: @emnapi/runtime`. This repo has no CI workflow, which is why nothing
+has ever reported it. Dependencies for this change were installed with
+`--no-package-lock` so the drift was neither hidden nor silently rewritten.
