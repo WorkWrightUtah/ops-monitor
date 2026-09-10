@@ -28,8 +28,12 @@ export const TIMEOUT_MS = 10_000;
  */
 export const RETRY_DELAY_MS = 3_000;
 
+// Points at the main site, not status.workwright.co, which was retired with the
+// dashboard on 2026-09-09. The whole purpose of this string is that somebody
+// whose site we poll can look us up and decide to allow us through; a URL that
+// resolves to nothing defeats it entirely.
 const USER_AGENT =
-  "WorkWright-OpsMonitor/1.0 (+https://status.workwright.co; ops@workwright.co)";
+  "WorkWright-OpsMonitor/1.0 (+https://www.workwright.co; monitor@workwright.co)";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
