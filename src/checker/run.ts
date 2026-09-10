@@ -6,10 +6,9 @@
 // be able to silently stop the monitoring.
 
 import { outcomeOf, reconcile, type CheckOutcome } from "../lib/check-outcome";
-import { decide, stateBeganAt, type AlertAction } from "./alert-rules";
+import { decide, type AlertAction } from "./alert-rules";
 import { checkUrl, type CheckResult } from "./http-check";
 import { sendNotice } from "./notify";
-import { reportIncident } from "./report-incident";
 import { askSecondVantage } from "./second-opinion";
 import { createAdminClient } from "./supabase";
 
@@ -61,12 +60,6 @@ async function announce(
   action: Exclude<AlertAction, "none">,
   result: CheckResult | null,
   checkedAt: string,
-  /**
-   * When the state being announced actually began. Null when we cannot tell —
-   * a target switched off while down has no run to measure, and the portal is
-   * told nothing rather than told a guess.
-   */
-  since: string | null,
 ) {
   const kind = action === "alert" ? "down" : "recovered";
   const report = await sendNotice(kind, target, result, checkedAt);
@@ -98,26 +91,6 @@ async function announce(
   log(
     `  ${target.name}: ${kind} notice sent (email=${report.email}, teams=${report.teams})`,
   );
-
-  /*
-    Last, and deliberately after the alerting flag is committed. The portal's
-    incident record is bookkeeping for a different app; the notice above is what
-    this tool exists for. reportIncident never throws and its result is not
-    checked, so a portal that is redeploying cannot turn into a missed page.
-
-    Skipped when we do not know when the run began — see the `since` parameter.
-  */
-  if (since) {
-    await reportIncident({
-      targetId: target.id,
-      targetName: target.name,
-      transition: action === "alert" ? "down" : "recovered",
-      since,
-      statusCode: result?.status_code ?? null,
-      detail: result?.outcome === "blocked" ? "refused by the edge" : null,
-      log,
-    });
-  }
 }
 
 /** Check one active target, record it, and act on the result. */
@@ -198,7 +171,7 @@ async function processActive(supabase: Supabase, target: Target) {
   // checks.outcome existed — or by a checker mid-deploy that did not set it.
   const { data: recent, error: historyError } = await supabase
     .from("checks")
-    .select("outcome, status_code, checked_at")
+    .select("outcome, status_code")
     .eq("target_id", target.id)
     .order("checked_at", { ascending: false })
     .limit(HISTORY_WINDOW);
@@ -208,31 +181,16 @@ async function processActive(supabase: Supabase, target: Target) {
     return;
   }
 
-  // One mapping, used for both the decision and the run's start time, so the
-  // two can never be computed from different reads of the history.
-  const history = (recent ?? []).map((row) => ({
-    outcome:
-      (row.outcome as CheckOutcome | null) ?? outcomeOf(row.status_code),
-    checkedAt: row.checked_at as string,
-  }));
-
   const action = decide({
     active: true,
     alerting: target.alerting,
-    recent: history.map((h) => h.outcome),
+    recent: (recent ?? []).map(
+      (row) => (row.outcome as CheckOutcome | null) ?? outcomeOf(row.status_code),
+    ),
   });
 
   if (action !== "none") {
-    await announce(
-      supabase,
-      target,
-      action,
-      result,
-      checkedAt,
-      // An alert is announcing a run of failures; a recovery, a run of
-      // successes. Ask for the one being announced.
-      stateBeganAt(history, action === "alert" ? "down" : "up"),
-    );
+    await announce(supabase, target, action, result, checkedAt);
   }
 }
 
@@ -249,20 +207,7 @@ async function processDeactivated(supabase: Supabase, target: Target) {
 
   if (action !== "none") {
     log(`  ${target.name}: deactivated with an alert open — closing it out`);
-    /*
-      `since` is null: the portal is told nothing about this one.
-
-      We are closing our own alert because we have stopped watching, not because
-      the site came back — and we do not know whether it did. Sending "recovered
-      at now" would write a recovery time into the portal that nobody observed,
-      and the portal computes a client-visible duration from it.
-
-      The incident there stays open, which is the true statement: it was down
-      when we stopped looking. Whoever switched the target off is the person who
-      knows what actually happened, and pausing the monitor on the project makes
-      the portal say so.
-    */
-    await announce(supabase, target, action, null, new Date().toISOString(), null);
+    await announce(supabase, target, action, null, new Date().toISOString());
   }
 }
 

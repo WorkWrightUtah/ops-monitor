@@ -8,7 +8,6 @@ import {
   decide,
   FAILURE_THRESHOLD,
   MAX_BLOCKED_GAP,
-  stateBeganAt,
 } from "./alert-rules";
 
 // The spec calls alerting "the feature this tool exists for" and says to test
@@ -288,56 +287,4 @@ test("a real outage during a block is still caught", () => {
     replay([up, blocked, down, blocked, down, blocked, down, up, up]),
     ["down", "recovered"],
   );
-});
-
-test("stateBeganAt reports when the run started, not when we noticed", () => {
-  // Three failures at 14:00, 14:05, 14:10. The alert fires on the third, but
-  // the site went down at 14:00 — and that ten-minute difference is subtracted
-  // from every outage the client is ever shown if we report the wrong one.
-  const recent = [
-    { outcome: "down" as const, checkedAt: "2026-09-10T14:10:00Z" },
-    { outcome: "down" as const, checkedAt: "2026-09-10T14:05:00Z" },
-    { outcome: "down" as const, checkedAt: "2026-09-10T14:00:00Z" },
-    { outcome: "up" as const, checkedAt: "2026-09-10T13:55:00Z" },
-  ];
-  assert.equal(stateBeganAt(recent, "down"), "2026-09-10T14:00:00Z");
-});
-
-test("stateBeganAt returns null when the run asked about is not happening", () => {
-  const recent = [
-    { outcome: "up" as const, checkedAt: "2026-09-10T14:10:00Z" },
-    { outcome: "down" as const, checkedAt: "2026-09-10T14:05:00Z" },
-  ];
-  assert.equal(stateBeganAt(recent, "down"), null);
-});
-
-test("a refusal inside an outage neither ends it nor becomes its start", () => {
-  // Same rule the thresholds use: "blocked" is the absence of information, so
-  // it cannot be the moment the site went down.
-  const recent = [
-    { outcome: "down" as const, checkedAt: "2026-09-10T14:15:00Z" },
-    { outcome: "blocked" as const, checkedAt: "2026-09-10T14:10:00Z" },
-    { outcome: "down" as const, checkedAt: "2026-09-10T14:05:00Z" },
-    { outcome: "up" as const, checkedAt: "2026-09-10T14:00:00Z" },
-  ];
-  assert.equal(stateBeganAt(recent, "down"), "2026-09-10T14:05:00Z");
-});
-
-test("the run's start and the run's length always describe the same run", () => {
-  /*
-    The reason stateBeganAt walks informativeIndices rather than its own loop.
-    A blind spot longer than MAX_BLOCKED_GAP stops the walk, so the reported
-    start must not be older than the oldest check the threshold could count.
-  */
-  const outcomes: CheckOutcome[] = [
-    "down", "blocked", "blocked", "blocked", "blocked", "down", "down",
-  ];
-  const recent = outcomes.map((outcome, i) => ({
-    outcome,
-    checkedAt: new Date(Date.UTC(2026, 8, 10, 14, 30 - i * 5)).toISOString(),
-  }));
-
-  // The walk stops at the fourth refusal, so only the newest "down" is in reach.
-  assert.equal(consecutiveFailures(outcomes), 1);
-  assert.equal(stateBeganAt(recent, "down"), recent[0].checkedAt);
 });
