@@ -3,6 +3,34 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-11-10 — The second vantage's reading is stored; refusals are described as refusals
+**What happened:** between 14:15 and 14:51 UTC every target hosted on Railway — the staff portal,
+the client portal and the WorkWright site — got intermittent 429s. Railway's request log for the
+portal shows **no 429s served by the app** in that window; the refusals came from in front of it,
+almost certainly Railway's edge. The Worker was refused too on some checks, so `reconcile()` promoted
+three of them to `down` and the staff portal alerted at 14:30. It recovered at 14:55.
+
+**Three changes:**
+
+1. **`checks.second_outcome` and `checks.second_status_code`.** The table stored our reading and the
+   reconciled verdict, but not the Worker's reading, so the same row (`429`) appeared as `blocked`
+   and as `down` with nothing to say why. Working it out took Railway logs, which age out. NULL
+   `second_outcome` means "not asked", which is distinct from `unavailable`. If the code is deployed
+   before the migration is applied, the checker logs the missing columns and writes the row without
+   them rather than recording nothing.
+2. **The DOWN email says when both networks were refused.** `Reason:` now quotes both readings
+   ("HTTP 429 here; an independent network got HTTP 429"). When both were refusals, the headline
+   drops "looks down" and says the host or a firewall is the likely source and the app may be
+   running. The alert still goes out: visitors may have been refused too. **The subject is
+   unchanged** (`DOWN: <name>`), so mail rules and anyone filtering on it are unaffected.
+3. **The Worker's user-agent** pointed at `status.workwright.co`, retired on 2026-09-09. The
+   checker's copy was fixed then, but this one was missed. It now matches the checker's contact URL
+   and address. **This takes a `wrangler deploy` to go live.**
+
+**Not changed, and worth knowing:** the `blocked + blocked → down` row in `reconcile()` assumes the
+two networks are independent. Today they weren't, because both went through the same host edge.
+Spotting simultaneous refusals across targets on one host is the next step if this repeats.
+
 ## 2026-08-14 — The Teams channel is now an email address
 **What changed:** the checker posts to Teams by emailing the channel's own address through Resend.
 No OAuth, no n8n, no Power Automate. `TEAMS_CHANNEL_EMAIL` on the Railway `checker` service; unset

@@ -29,7 +29,8 @@ export const TIMEOUT_MS = 10_000;
 export const RETRY_DELAY_MS = 3_000;
 
 // Points at the main site, not status.workwright.co, which was retired with the
-// dashboard on 2026-09-09. The whole purpose of this string is that somebody
+// dashboard on 2026-09-09 (the Worker in workers/vantage carries a matching
+// string; change both together). The whole purpose of this string is that somebody
 // whose site we poll can look us up and decide to allow us through; a URL that
 // resolves to nothing defeats it entirely.
 const USER_AGENT =

@@ -78,6 +78,9 @@ accounts can read.
 | `status_code` | HTTP status, or **NULL** when no HTTP response arrived (DNS failure, refused, timeout) |
 | `response_ms` | Response time in ms, recorded on failures too |
 | `ok` | `true` on 2xx/3xx; `false` otherwise |
+| `outcome` | Reconciled verdict: `up`, `down` or `blocked` (see `reconcile()` in `src/lib/check-outcome.ts`). Added 2026-08-11 |
+| `second_outcome` | What the second vantage concluded: `up`, `down`, `blocked` or `unavailable`. **NULL = not asked** (our own reading was `up`). Added 2026-11-10 |
+| `second_status_code` | HTTP status the second vantage got; NULL when no response, unavailable, or not asked. Added 2026-11-10 |
 
 **`target_status`** — a view, not a table. One row per target with its latest check and 24h/7d
 uptime, so a dashboard tile is one query rather than four. Declared `security_invoker = on` so RLS

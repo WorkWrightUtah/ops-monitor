@@ -2,8 +2,8 @@
 #
 # Deployed to Ryan's Cloudflare account (the same one holding the workwright.co
 # zone). No routes and no custom domain: it answers on its own workers.dev
-# hostname, which is all the checker needs and keeps it off the zone that
-# serves status.workwright.co.
+# hostname, which is all the checker needs and keeps it off the workwright.co
+# zone entirely.
 #
 # account_id is read from the CLOUDFLARE_ACCOUNT_ID environment variable rather
 # than written here — see README "Deploying the second vantage".

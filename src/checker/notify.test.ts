@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { FAILURE_THRESHOLD } from "./alert-rules";
-import { bodyFor, channelFailureNotice, reason, subjectFor } from "./notify";
+import { bodyFor, channelFailureNotice, reason, refusedByBoth, subjectFor } from "./notify";
 
 // The alert rules decide *whether* to speak; these decide *what gets said*.
 // A wrong message is a silent failure — nothing throws, the send succeeds, and
@@ -133,4 +133,79 @@ test("the warning does not imply the outage alert was lost", () => {
 
   assert.match(notice, /went out by email/i);
   assert.match(notice, /reaching this mailbox/i);
+});
+
+// 2026-11-10: every Railway-hosted target got intermittent 429s from the host's
+// edge for half an hour. Both vantages were refused, reconcile() called it an
+// outage, and the email said "looks down" over a portal that never served a
+// single 429. The alert was fair to send; the wording overstated the evidence.
+
+const REFUSED_BY_BOTH = {
+  status_code: 429,
+  response_ms: 70,
+  ok: false,
+  outcome: "blocked" as const,
+  second: { outcome: "blocked" as const, status_code: 429 },
+};
+
+test("reason: quotes the second network's reading when it has one", () => {
+  assert.equal(
+    reason(REFUSED_BY_BOTH),
+    "HTTP 429 here; an independent network got HTTP 429",
+  );
+  assert.match(
+    reason({
+      status_code: 503,
+      response_ms: 40,
+      ok: false,
+      outcome: "down",
+      second: { outcome: "down", status_code: null },
+    }),
+    /^HTTP 503 here; an independent network got no response/,
+  );
+});
+
+test("reason: an unavailable second vantage is not quoted as corroboration", () => {
+  assert.equal(
+    reason({
+      status_code: 503,
+      response_ms: 40,
+      ok: false,
+      outcome: "down",
+      second: { outcome: "unavailable", status_code: null },
+    }),
+    "HTTP 503",
+  );
+});
+
+test("an outage both networks were refused on says so, and does not say 'looks down'", () => {
+  assert.equal(refusedByBoth(REFUSED_BY_BOTH), true);
+
+  const body = bodyFor("down", TARGET, REFUSED_BY_BOTH, CHECKED_AT);
+  assert.match(body, /refused by both our checker and an independent network/i);
+  assert.doesNotMatch(body, /looks down/i);
+  assert.match(body, /the app may be running/i);
+  assert.match(body, new RegExp(`${FAILURE_THRESHOLD} checks in a row`, "i"));
+  assert.match(body, /one more message when it comes back/i);
+  assert.doesNotMatch(body, /undefined|null|NaN/);
+});
+
+test("a genuine failure keeps the plain 'looks down' wording", () => {
+  for (const result of [
+    { status_code: 500, response_ms: 84, ok: false },
+    // Refused here, but the other network saw it genuinely failing: that is a
+    // stronger signal, not a refusal, and must not be softened.
+    {
+      status_code: 403,
+      response_ms: 50,
+      ok: false,
+      outcome: "blocked" as const,
+      second: { outcome: "down" as const, status_code: 502 },
+    },
+  ]) {
+    assert.equal(refusedByBoth(result), false);
+    const body = bodyFor("down", TARGET, result, CHECKED_AT);
+    assert.match(body, /looks down/);
+    assert.doesNotMatch(body, /app may be running/i);
+  }
 });

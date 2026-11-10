@@ -1,3 +1,4 @@
+import type { CheckOutcome, SecondOpinion } from "../lib/check-outcome";
 import { FAILURE_THRESHOLD } from "./alert-rules";
 import type { CheckResult } from "./http-check";
 
@@ -7,10 +8,22 @@ export type NoticeKind = "down" | "recovered";
  * Just the parts of a check a notice actually quotes.
  *
  * Narrower than CheckResult on purpose: a notice reports what was observed,
- * and should not start depending on how many attempts it took or how the
- * outcome was classified. A full CheckResult still satisfies it.
+ * and should not start depending on how many attempts it took. A full
+ * CheckResult still satisfies it.
+ *
+ * `outcome` and `second` are optional because a notice can be written without
+ * them (a recovery, a deactivation, a target where the second vantage was not
+ * asked) and must still read correctly. When both are present the notice can
+ * say *what kind* of failure this was, which is the difference between "the
+ * app crashed" and "something in front of the app is turning us away" — and
+ * those send the reader to different places.
  */
-export type NoticeResult = Pick<CheckResult, "status_code" | "response_ms" | "ok">;
+export type NoticeResult = Pick<CheckResult, "status_code" | "response_ms" | "ok"> & {
+  /** Our own classification of our own reading, before reconciling. */
+  outcome?: CheckOutcome;
+  /** What the second vantage saw, when it was asked. */
+  second?: { outcome: SecondOpinion; status_code: number | null };
+};
 
 export type NoticeTarget = {
   id: string;
@@ -34,10 +47,37 @@ export type DeliveryReport = {
  */
 export function reason(result: NoticeResult | null): string {
   if (!result) return "the target was switched off while an alert was open";
-  if (result.status_code === null) {
-    return "no response — DNS failure, refused connection, or timeout";
-  }
-  return `HTTP ${result.status_code}`;
+
+  const ours = describeStatus(result.status_code);
+  const second = result.second;
+
+  // Only quote the second network when it gave a real reading. "Unavailable"
+  // is no information, and saying "an independent network got nothing" would
+  // read as corroboration when it is the opposite.
+  if (!second || second.outcome === "unavailable") return ours;
+
+  return `${ours} here; an independent network got ${describeStatus(second.status_code)}`;
+}
+
+function describeStatus(status: number | null): string {
+  return status === null
+    ? "no response — DNS failure, refused connection, or timeout"
+    : `HTTP ${status}`;
+}
+
+/**
+ * True when both networks were refused (401/403/429) rather than met with an
+ * error.
+ *
+ * That is the case reconcile() promotes to "down", and the one most likely to
+ * be wrong: on 2026-11-10 every target on Railway got intermittent 429s from
+ * the host's edge for half an hour, both vantages were caught by it, and the
+ * portal behind it never served a single 429. "Looks down" was an overstatement
+ * of what the evidence said. The alert should still go out — visitors may have
+ * been refused too — but it should say what was actually seen.
+ */
+export function refusedByBoth(result: NoticeResult | null): boolean {
+  return result?.outcome === "blocked" && result.second?.outcome === "blocked";
 }
 
 export function subjectFor(kind: NoticeKind, target: NoticeTarget): string {
@@ -55,12 +95,23 @@ export function bodyFor(
   const lines =
     kind === "down"
       ? [
-          `${target.name} failed ${FAILURE_THRESHOLD} checks in a row and looks down.`,
+          refusedByBoth(result)
+            ? `${target.name} failed ${FAILURE_THRESHOLD} checks in a row. ` +
+              "The latest was refused by both our checker and an independent network, not met with an error."
+            : `${target.name} failed ${FAILURE_THRESHOLD} checks in a row and looks down.`,
           "",
           `URL:      ${target.url}`,
           `Reason:   ${reason(result)}`,
           `Observed: ${checkedAt}`,
           "",
+          ...(refusedByBoth(result)
+            ? [
+                "A refusal (401, 403 or 429) usually comes from the host or a firewall in front of the",
+                "site, not from the app. The app may be running. Visitors may be turned away too, so",
+                "open it in a browser before assuming either way.",
+                "",
+              ]
+            : []),
           "You will get one more message when it comes back. No repeats in the meantime.",
         ]
       : [

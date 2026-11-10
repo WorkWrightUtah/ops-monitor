@@ -22,6 +22,13 @@ type VantageBody = { status_code?: number | null };
 
 export type SecondOpinionResult = {
   outcome: SecondOpinion;
+  /**
+   * The HTTP status the Worker got from the target, or null when it got no
+   * response — or when there is no reading at all ("unavailable"). Kept so the
+   * row in `checks` can say what the second network actually saw, not just
+   * what we concluded from it.
+   */
+  status_code: number | null;
   /** Why, in words, for the log. Empty when the answer is a real reading. */
   detail: string;
 };
@@ -52,13 +59,13 @@ export async function askSecondVantage(
   // The normal state until someone finishes the setup in the README, and the
   // monitor works exactly as it did before until they do.
   if (!endpoint && !token) {
-    return { outcome: "unavailable", detail: "not configured" };
+    return { outcome: "unavailable", status_code: null, detail: "not configured" };
   }
   if (!endpoint) {
-    return { outcome: "unavailable", detail: "VANTAGE_URL is not set" };
+    return { outcome: "unavailable", status_code: null, detail: "VANTAGE_URL is not set" };
   }
   if (!token) {
-    return { outcome: "unavailable", detail: "VANTAGE_TOKEN is not set" };
+    return { outcome: "unavailable", status_code: null, detail: "VANTAGE_TOKEN is not set" };
   }
 
   try {
@@ -81,6 +88,7 @@ export async function askSecondVantage(
           : "";
       return {
         outcome: "unavailable",
+        status_code: null,
         detail: `worker returned HTTP ${response.status}${hint}`,
       };
     }
@@ -91,11 +99,15 @@ export async function askSecondVantage(
     // own no-response case. `undefined` means the body was not what we expect,
     // which is not an answer at all.
     if (body.status_code === undefined) {
-      return { outcome: "unavailable", detail: "worker sent an unexpected body" };
+      return { outcome: "unavailable", status_code: null, detail: "worker sent an unexpected body" };
     }
 
-    return { outcome: outcomeOf(body.status_code), detail: "" };
+    return {
+      outcome: outcomeOf(body.status_code),
+      status_code: body.status_code,
+      detail: "",
+    };
   } catch (error) {
-    return { outcome: "unavailable", detail: `unreachable: ${String(error)}` };
+    return { outcome: "unavailable", status_code: null, detail: `unreachable: ${String(error)}` };
   }
 }
