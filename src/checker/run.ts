@@ -7,8 +7,8 @@
 
 import { outcomeOf, reconcile, type CheckOutcome } from "../lib/check-outcome";
 import { decide, type AlertAction } from "./alert-rules";
-import { checkUrl, type CheckResult } from "./http-check";
-import { sendNotice } from "./notify";
+import { checkUrl } from "./http-check";
+import { sendNotice, type NoticeResult } from "./notify";
 import { askSecondVantage } from "./second-opinion";
 import { createAdminClient } from "./supabase";
 import { normalizeUrl } from "../lib/target-url";
@@ -59,7 +59,7 @@ async function announce(
   supabase: Supabase,
   target: Target,
   action: Exclude<AlertAction, "none">,
-  result: CheckResult | null,
+  result: NoticeResult | null,
   checkedAt: string,
 ) {
   const kind = action === "alert" ? "down" : "recovered";
@@ -121,15 +121,15 @@ async function processActive(supabase: Supabase, target: Target) {
   // Only bother a second network when our own answer is bad news. A healthy
   // response needs no corroboration, and this keeps the Worker's traffic
   // proportional to trouble rather than to time.
-  const second =
-    result.outcome === "up"
-      ? { outcome: "unavailable" as const, detail: "not asked" }
-      : await askSecondVantage(target.url);
+  const asked = result.outcome !== "up";
+  const second = asked
+    ? await askSecondVantage(target.url)
+    : { outcome: "unavailable" as const, status_code: null, detail: "not asked" };
   const outcome = reconcile(result.outcome, second.outcome);
 
   const checkedAt = new Date().toISOString();
 
-  const { error: insertError } = await supabase.from("checks").insert({
+  const row = {
     target_id: target.id,
     checked_at: checkedAt,
     status_code: result.status_code,
@@ -139,7 +139,33 @@ async function processActive(supabase: Supabase, target: Target) {
     // status code can now mean opposite things, so it is written down here
     // rather than re-derived later from evidence that no longer contains it.
     outcome,
-  });
+  };
+
+  // What the second network saw, beside what we saw. NULL second_outcome means
+  // "not asked", which is not the same as "asked and got nothing" — hence
+  // `asked` rather than reading the placeholder above.
+  const secondColumns = {
+    second_outcome: asked ? second.outcome : null,
+    second_status_code: asked ? second.status_code : null,
+  };
+
+  let { error: insertError } = await supabase
+    .from("checks")
+    .insert({ ...row, ...secondColumns });
+
+  // Railway deploys on merge, so this code can be live before the migration
+  // that adds the second_* columns has been applied. PostgREST then refuses the
+  // whole insert (PGRST204, unknown column) and every target would go
+  // unrecorded — a monitor gone blind over a column that is merely nice to
+  // have. Write the row without them instead, and say so in the log. Once the
+  // migration is applied this branch never runs.
+  if (insertError?.code === "PGRST204") {
+    log(
+      `  ! ${target.name}: checks.second_* columns missing — apply ` +
+        `20261110170000_checks_second_vantage.sql. Recording without them.`,
+    );
+    ({ error: insertError } = await supabase.from("checks").insert(row));
+  }
 
   if (insertError) {
     // Without the row on disk the history is wrong, and the alert decision
@@ -209,7 +235,13 @@ async function processActive(supabase: Supabase, target: Target) {
   });
 
   if (action !== "none") {
-    await announce(supabase, target, action, result, checkedAt);
+    await announce(
+      supabase,
+      target,
+      action,
+      asked ? { ...result, second } : result,
+      checkedAt,
+    );
   }
 }
 

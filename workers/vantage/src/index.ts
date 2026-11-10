@@ -36,9 +36,15 @@ const TIMEOUT_MS = 10_000;
  * Identify ourselves, and say plainly that this is the same monitor arriving
  * by a different road. If someone is deciding whether to allowlist the
  * checker, they should not have to work out that these two are related.
+ *
+ * Same contact URL and address as the checker's own string. This pointed at
+ * status.workwright.co until 2026-11-10 — two months after that domain was
+ * retired with the dashboard. The checker's copy was fixed on 2026-09-09; this
+ * one was missed, so for two months the Worker told anyone who looked it up to
+ * visit a hostname that resolves to nothing. Change both together.
  */
 const USER_AGENT =
-  "WorkWright-OpsMonitor/1.0 (second vantage; +https://status.workwright.co; ops@workwright.co)";
+  "WorkWright-OpsMonitor/1.0 (second vantage; +https://www.workwright.co; monitor@workwright.co)";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
