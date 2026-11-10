@@ -16,7 +16,7 @@ export function createAdminClient() {
 
   if (!url || !key) {
     throw new Error(
-      "Checker needs NEXT_PUBLIC_SUPABASE_URL (or SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY. See .env.local.example.",
+      "Checker needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY. See .env.local.example.",
     );
   }
 

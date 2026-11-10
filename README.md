@@ -98,3 +98,82 @@ One Railway service, `checker`, configured by [`railway.checker.json`](./railway
 
 A run that ends non-zero shows as a failed deployment in Railway. There is **no CI in this repo** —
 nothing runs the tests on push — so run them before you push.
+
+## Deploying the second vantage
+
+The second vantage is a Cloudflare Worker, `ops-monitor-vantage`, in **Ryan's** Cloudflare account
+(account ID `2c4c1ab25d852235fffc2c131480489a`). It answers at
+`https://ops-monitor-vantage.workwright.workers.dev`. Why it exists is in
+[`workers/vantage/src/index.ts`](./workers/vantage/src/index.ts).
+
+**Railway does not deploy it.** A merge to `main` redeploys the checker, but a change under
+`workers/vantage/` stays in the repo until someone runs `wrangler deploy` by hand. That gap is how the
+Worker kept a dead contact URL in its user-agent for two months after the checker's copy was fixed.
+
+### Redeploy after a change
+
+You need Node 20 or later (`node -v`) and a Cloudflare login that can reach Ryan's account. From a
+clone of `main`:
+
+```bash
+git pull
+```
+
+```bash
+cd workers/vantage
+```
+
+```bash
+npx wrangler login
+```
+
+That opens a browser. On the consent page, use **Edit** next to "All accounts" to grant only Ryan's
+account. Then:
+
+```bash
+CLOUDFLARE_ACCOUNT_ID=2c4c1ab25d852235fffc2c131480489a npx wrangler deploy
+```
+
+It ends by printing the `workers.dev` URL and a version ID. The Worker's token is stored in
+Cloudflare, not in the code, so a deploy keeps it. `npx wrangler logout` removes the saved login
+afterwards.
+
+### Check it is working
+
+Call it without a token:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" "https://ops-monitor-vantage.workwright.workers.dev/?url=https://www.workwright.co"
+```
+
+- **401**: correct. It has its token and refused a request that didn't present it.
+- **503**: the token is missing. Set it (below), or the checker quietly stops getting second opinions.
+
+Nothing breaks loudly either way. A Worker that is down or misconfigured reads as `unavailable`, and
+the checker carries on with its own reading alone. The only sign is in the checker's log: `second
+vantage saw unavailable (<reason>)`, and `second_outcome = 'unavailable'` in `checks`.
+
+### Set or rotate the token
+
+The checker and the Worker share one bearer token. It lives in 1Password and in two places at runtime:
+
+1. **Worker:** from `workers/vantage`, run the command below and paste the token when prompted:
+
+   ```bash
+   CLOUDFLARE_ACCOUNT_ID=2c4c1ab25d852235fffc2c131480489a npx wrangler secret put VANTAGE_TOKEN
+   ```
+
+2. **Railway:** `VANTAGE_TOKEN` on the `checker` service, set to the same value. `VANTAGE_URL` on the
+   same service holds the Worker's URL above.
+
+If the checker logs `worker returned HTTP 401`, the two copies don't match. It is almost always a
+trailing space or newline picked up when pasting into Railway.
+
+### Roll back
+
+```bash
+CLOUDFLARE_ACCOUNT_ID=2c4c1ab25d852235fffc2c131480489a npx wrangler rollback
+```
+
+That returns the Worker to its previous version. Then revert the commit on `main`, so the repo and
+the live Worker agree again.
