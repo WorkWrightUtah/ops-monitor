@@ -3,6 +3,35 @@
 > Append-only. Log any structural or scope choice the day it's made (CLAUDE.md rule).
 > Newest at the top.
 
+## 2026-11-10 — An alert says when other sites on the same host were refused too
+**What changed:** a DOWN email for a refusal now lists the other targets refused in the same run,
+and names the host when they share one: "Also refused by Railway in this run: …". This is the
+"not reconsidered" item from the entry below. It addresses the part of this morning's incident the
+second vantage couldn't: both vantages went through Railway's edge, so the evidence that settled it
+was that *every* Railway target was refused at once.
+
+**How a host is identified:** from the refusal's own response headers (`lib/edge.ts`), not from
+domain names. `app.`, `clients.` and `www.workwright.co` share nothing visible in their URLs, but a
+response says who issued it. Railway is matched on `X-Railway-Edge` (documented), plus
+`X-Railway-Request-Id` and a `server` header naming Railway. Cloudflare is matched on `cf-ray`, and
+Vercel on `x-vercel-id`. Same edge means grouped; a Cloudflare 403 and a Railway 429 are separate
+stories.
+
+**Unverified, deliberately shipped anyway:** Railway documents the header on normal responses, but
+not on the 429s its edge generates itself, and this session's network couldn't reach the sites to
+look. So the checker now logs `answered by: <edge>` on every bad reading, and the next real refusal
+settles it. If the header is missing, grouping falls back to "refused in the same run" with no host
+named. That is weaker but still true, which is the only kind of fallback worth having.
+
+**What it does not do:** change whether an alert goes out. `decide()` and `reconcile()` are
+untouched. A host refusing everyone is still an outage for visitors, and a monitor that argues
+itself out of alerting is the expensive failure. The edge is not stored either. It is only needed
+within a run, and adding a column for a guess we haven't confirmed would be premature.
+
+**The run is now two phases:** check and record every target, then decide and announce. An alert
+can't mention a site that hasn't been checked yet. The cost is that an alert waits for the slowest
+target in the run, at most a few tens of seconds against a five-minute cadence.
+
 ## 2026-11-10 — The second vantage's reading is stored; refusals are described as refusals
 **What happened:** between 14:15 and 14:51 UTC every target hosted on Railway — the staff portal,
 the client portal and the WorkWright site — got intermittent 429s. Railway's request log for the

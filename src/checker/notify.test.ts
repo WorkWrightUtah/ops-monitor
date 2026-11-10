@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { FAILURE_THRESHOLD } from "./alert-rules";
-import { bodyFor, channelFailureNotice, reason, refusedByBoth, subjectFor } from "./notify";
+import {
+  bodyFor,
+  channelFailureNotice,
+  reason,
+  refusedByBoth,
+  sharedRefusalLines,
+  subjectFor,
+} from "./notify";
 
 // The alert rules decide *whether* to speak; these decide *what gets said*.
 // A wrong message is a silent failure — nothing throws, the send succeeds, and
@@ -208,4 +215,54 @@ test("a genuine failure keeps the plain 'looks down' wording", () => {
     assert.match(body, /looks down/);
     assert.doesNotMatch(body, /app may be running/i);
   }
+});
+
+// Refusals shared across targets in one run. Same incident: all three Railway
+// targets refused at once, and the alert blamed one of them.
+
+test("an outage refused alongside other sites on the same host names the host and the others", () => {
+  const body = bodyFor(
+    "down",
+    TARGET,
+    {
+      ...REFUSED_BY_BOTH,
+      shared: { host: "Railway", others: ["WorkWright Portal (clients)", "WorkWright site"] },
+    },
+    CHECKED_AT,
+  );
+
+  assert.match(
+    body,
+    /Also refused by Railway in this run: WorkWright Portal \(clients\), WorkWright site\./,
+  );
+  assert.match(body, /the host is the\s+likely source, not this site/i);
+  assert.match(body, /Railway's status page/);
+  // Still an alert: it says why, it does not stand down.
+  assert.match(body, /one more message when it comes back/i);
+  assert.doesNotMatch(body, /undefined|null|NaN/);
+});
+
+test("an unknown edge reports the shared refusal without naming a host", () => {
+  const lines = sharedRefusalLines({
+    ...REFUSED_BY_BOTH,
+    shared: { host: null, others: ["B"] },
+  }).join("\n");
+  assert.match(lines, /^Also refused in this run: B\./);
+  assert.match(lines, /our checker's own network/);
+  assert.doesNotMatch(lines, /null|undefined/);
+});
+
+test("the shared-refusal paragraph never appears on a genuine failure or a recovery", () => {
+  const shared = { host: "Railway", others: ["WorkWright site"] };
+  // Grouping is computed from our own refusals, so a "down" reading with a
+  // shared list attached is a caller bug. It still must not say "refused".
+  assert.deepEqual(
+    sharedRefusalLines({ status_code: 500, response_ms: 40, ok: false, outcome: "down", shared }),
+    [],
+  );
+  assert.doesNotMatch(
+    bodyFor("recovered", TARGET, { status_code: 200, response_ms: 90, ok: true, outcome: "up", shared }, CHECKED_AT),
+    /Also refused/,
+  );
+  assert.deepEqual(sharedRefusalLines(null), []);
 });

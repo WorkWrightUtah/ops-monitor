@@ -1,6 +1,7 @@
 import type { CheckOutcome, SecondOpinion } from "../lib/check-outcome";
 import { FAILURE_THRESHOLD } from "./alert-rules";
 import type { CheckResult } from "./http-check";
+import type { SharedRefusal } from "./shared-refusal";
 
 export type NoticeKind = "down" | "recovered";
 
@@ -23,6 +24,8 @@ export type NoticeResult = Pick<CheckResult, "status_code" | "response_ms" | "ok
   outcome?: CheckOutcome;
   /** What the second vantage saw, when it was asked. */
   second?: { outcome: SecondOpinion; status_code: number | null };
+  /** Other targets refused in the same run, when there were any. */
+  shared?: SharedRefusal | null;
 };
 
 export type NoticeTarget = {
@@ -80,6 +83,33 @@ export function refusedByBoth(result: NoticeResult | null): boolean {
   return result?.outcome === "blocked" && result.second?.outcome === "blocked";
 }
 
+/**
+ * The paragraph that says this refusal was not this site's alone.
+ *
+ * Exported for tests. Empty when there is nothing to say. That covers a
+ * refusal nobody else shared, a genuine failure, and a recovery.
+ */
+export function sharedRefusalLines(result: NoticeResult | null): string[] {
+  const shared = result?.shared;
+  if (!shared || result?.outcome !== "blocked") return [];
+
+  const names = shared.others.join(", ");
+
+  return shared.host
+    ? [
+        `Also refused by ${shared.host} in this run: ${names}.`,
+        `When several sites behind one host are refused at the same time, the host is the`,
+        `likely source, not this site. Check ${shared.host}'s status page before the app.`,
+        "",
+      ]
+    : [
+        `Also refused in this run: ${names}.`,
+        "When several sites are refused at once, the cause is probably something they share,",
+        "such as their host or our checker's own network, not this site.",
+        "",
+      ];
+}
+
 export function subjectFor(kind: NoticeKind, target: NoticeTarget): string {
   return kind === "down"
     ? `DOWN: ${target.name}`
@@ -112,6 +142,7 @@ export function bodyFor(
                 "",
               ]
             : []),
+          ...sharedRefusalLines(result),
           "You will get one more message when it comes back. No repeats in the meantime.",
         ]
       : [
