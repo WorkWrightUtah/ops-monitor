@@ -1,6 +1,7 @@
 // Relative, not "@/lib/...": this module runs under plain tsx on the checker
 // service, not through the Next.js bundler that resolves the alias.
 import { type CheckOutcome, isHealthyStatus, outcomeOf } from "../lib/check-outcome";
+import { edgeOf } from "../lib/edge";
 
 /** One HTTP GET against one target, shaped like a row of `checks`. */
 export type CheckResult = {
@@ -11,6 +12,12 @@ export type CheckResult = {
   outcome: CheckOutcome;
   /** How many requests it took. 2 means the first attempt failed and we retried. */
   attempts: number;
+  /**
+   * The hosting edge that answered (Railway, Cloudflare, ...), from the
+   * response headers. Null when the headers don't say, or when nothing answered.
+   * See lib/edge.ts.
+   */
+  edge: string | null;
 };
 
 /**
@@ -79,6 +86,7 @@ async function attempt(url: string, timeoutMs: number): Promise<CheckResult> {
       outcome: outcomeOf(response.status),
       response_ms,
       attempts: 1,
+      edge: edgeOf(response.headers),
     };
   } catch {
     // DNS failure, connection refused, TLS error, or our own timeout. There is
@@ -91,6 +99,7 @@ async function attempt(url: string, timeoutMs: number): Promise<CheckResult> {
       outcome: "down",
       response_ms: Math.round(performance.now() - started),
       attempts: 1,
+      edge: null,
     };
   }
 }

@@ -76,6 +76,9 @@ All of this is pure and unit-tested; run `npm test`.
 - **A second vantage** (a Cloudflare Worker, `workers/vantage`) is asked for its own reading whenever
   ours is bad news. Unreachable, unconfigured or nonsense all return "unavailable" rather than
   throwing — the thing that makes the checker better must not be able to break it.
+- **An alert says when other sites on the same host were refused in the same run**, and names the
+  host from the refusal's response headers. It explains the alert; it never cancels one. See
+  `docs/decisions.md`, 2026-11-10.
 - **The checker identifies itself honestly** in its user-agent, with a contact URL and address, so
   anyone whose site it polls can look it up and allow it through. Dressing it up as Chrome would walk
   past most bot filters and make that impossible.

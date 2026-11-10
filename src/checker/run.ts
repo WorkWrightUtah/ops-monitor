@@ -7,9 +7,10 @@
 
 import { outcomeOf, reconcile, type CheckOutcome } from "../lib/check-outcome";
 import { decide, type AlertAction } from "./alert-rules";
-import { checkUrl } from "./http-check";
+import { checkUrl, type CheckResult } from "./http-check";
 import { sendNotice, type NoticeResult } from "./notify";
-import { askSecondVantage } from "./second-opinion";
+import { askSecondVantage, type SecondOpinionResult } from "./second-opinion";
+import { sharedRefusal, type RunReading } from "./shared-refusal";
 import { createAdminClient } from "./supabase";
 import { normalizeUrl } from "../lib/target-url";
 
@@ -94,8 +95,23 @@ async function announce(
   );
 }
 
-/** Check one active target, record it, and act on the result. */
-async function processActive(supabase: Supabase, target: Target) {
+/** What phase one hands to phase two for one target. */
+type Checked = {
+  target: Target;
+  result: CheckResult;
+  second: SecondOpinionResult;
+  /** Whether the second vantage was actually asked. */
+  asked: boolean;
+  checkedAt: string;
+};
+
+/**
+ * Phase one: check one active target and record the result.
+ *
+ * Returns null when there is nothing for phase two to act on: a URL we refused
+ * to check, or a row that failed to save.
+ */
+async function checkTarget(supabase: Supabase, target: Target): Promise<Checked | null> {
   /*
     Validate the URL before fetching it.
 
@@ -111,7 +127,7 @@ async function processActive(supabase: Supabase, target: Target) {
   const checked = normalizeUrl(target.url);
   if ("error" in checked) {
     log(`  ! ${target.name}: refusing to check this url — ${checked.error}`);
-    return;
+    return null;
   }
 
   await sleep(Math.random() * JITTER_MS);
@@ -172,7 +188,7 @@ async function processActive(supabase: Supabase, target: Target) {
     // below would be made against a record that does not match reality.
     // Better to skip this target this cycle and let the next run redo it.
     log(`  ! ${target.name}: failed to record check: ${insertError.message}`);
-    return;
+    return null;
   }
 
   const label =
@@ -189,6 +205,10 @@ async function processActive(supabase: Supabase, target: Target) {
       `    we saw ${result.outcome}; second vantage saw ${second.outcome}` +
         (second.detail ? ` (${second.detail})` : ""),
     );
+    // Logged on every bad reading, because lib/edge.ts rests on an unverified
+    // guess: that a host's edge labels the refusals it issues itself. The first
+    // real refusal after this ships answers it, here.
+    log(`    answered by: ${result.edge ?? "unknown edge (no recognised headers)"}`);
   }
 
   if (outcome === "blocked") {
@@ -209,6 +229,22 @@ async function processActive(supabase: Supabase, target: Target) {
     );
   }
 
+  return { target, result, second, asked, checkedAt };
+}
+
+/**
+ * Phase two: decide whether anyone needs telling about one target, and tell them.
+ *
+ * Runs only after every target in this run has been checked, so an alert can
+ * say which other sites were refused at the same time. That costs a little
+ * latency (an alert now waits for the slowest target in the run, at most a
+ * few tens of seconds) against a five-minute cadence.
+ */
+async function decideAndAnnounce(
+  supabase: Supabase,
+  { target, result, second, asked, checkedAt }: Checked,
+  run: readonly RunReading[],
+) {
   // Read back the tail *including* the row just written, so the threshold is
   // counted against what is actually stored rather than what we think we wrote.
   //
@@ -235,14 +271,24 @@ async function processActive(supabase: Supabase, target: Target) {
   });
 
   if (action !== "none") {
+    const shared = sharedRefusal(readingOf({ target, result }), run);
     await announce(
       supabase,
       target,
       action,
-      asked ? { ...result, second } : result,
+      { ...result, ...(asked ? { second } : {}), shared },
       checkedAt,
     );
   }
+}
+
+function readingOf({ target, result }: Pick<Checked, "target" | "result">): RunReading {
+  return {
+    targetId: target.id,
+    name: target.name,
+    refused: result.outcome === "blocked",
+    edge: result.edge,
+  };
 }
 
 /**
@@ -284,20 +330,36 @@ async function main() {
       (standDown.length ? `, closing out ${standDown.length}` : ""),
   );
 
-  // Targets are independent, so check them concurrently — one slow site should
-  // not delay the rest. Promise.allSettled so a thrown error on one target
-  // cannot abandon the others mid-run.
-  const outcomes = await Promise.allSettled([
-    ...active.map((t) => processActive(supabase, t)),
+  // Phase one. Targets are independent, so check them concurrently. One slow
+  // site should not delay the rest, and Promise.allSettled means a thrown error
+  // on one target cannot abandon the others mid-run.
+  const checks = await Promise.allSettled(active.map((t) => checkTarget(supabase, t)));
+
+  const checked = checks
+    .filter((c): c is PromiseFulfilledResult<Checked | null> => c.status === "fulfilled")
+    .map((c) => c.value)
+    .filter((c): c is Checked => c !== null);
+
+  // Every reading from this run, so each alert can see the others.
+  const run = checked.map(readingOf);
+
+  // Phase two: alerts for checked targets, and close-outs for switched-off ones.
+  const decisions = await Promise.allSettled([
+    ...checked.map((c) => decideAndAnnounce(supabase, c, run)),
     ...standDown.map((t) => processDeactivated(supabase, t)),
   ]);
 
-  const failures = outcomes.filter((o) => o.status === "rejected");
+  // A target that threw in phase one never reached phase two, so the two
+  // phases' failures never double-count one target. The total is per target,
+  // as it was before the split: one that stopped early (a URL we refused, a row
+  // that failed to save) logged its own reason and still counts as processed.
+  const failures = [...checks, ...decisions].filter((o) => o.status === "rejected");
+  const total = active.length + standDown.length;
   for (const failure of failures) {
     log(`  ! unexpected error: ${String((failure as PromiseRejectedResult).reason)}`);
   }
 
-  log(`Done. ${outcomes.length - failures.length}/${outcomes.length} targets processed cleanly.`);
+  log(`Done. ${total - failures.length}/${total} targets processed cleanly.`);
 
   // A target that blew up is a bad run worth surfacing in Railway, but the
   // rows that did land are still recorded.
