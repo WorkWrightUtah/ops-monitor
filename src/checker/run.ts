@@ -162,7 +162,7 @@ async function processActive(supabase: Supabase, target: Target) {
   if (insertError?.code === "PGRST204") {
     log(
       `  ! ${target.name}: checks.second_* columns missing — apply ` +
-        `20261110170000_checks_second_vantage.sql. Recording without them.`,
+        `20261110211223_checks_second_vantage.sql. Recording without them.`,
     );
     ({ error: insertError } = await supabase.from("checks").insert(row));
   }
